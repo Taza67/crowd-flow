@@ -5,6 +5,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>crowd-flow dashboard</title>
+  <link rel="icon" href="data:," />
   <style>
     :root {
       --bg: #070b14;
@@ -164,10 +165,23 @@
     #gridBlock {
       flex: 1;
       min-height: 0;
-      display: grid;
+      display: flex;
+      flex-wrap: wrap;
+      align-content: stretch;
       gap: 8px;
-      grid-template-columns: repeat(var(--cols, 4), minmax(0, 1fr));
-      grid-template-rows: minmax(0, 1fr);
+    }
+
+    #grid>article,
+    #gridBlock>article {
+      flex: 1 1 calc((100% - (var(--cols, 1) - 1) * 8px) / var(--cols, 1));
+      height: calc((100% - (var(--rows, 1) - 1) * 8px) / var(--rows, 1));
+      max-height: 100%;
+    }
+
+    #grid>.empty,
+    #gridBlock>.empty {
+      flex: 1 1 100%;
+      height: auto;
     }
 
     article {
@@ -183,39 +197,69 @@
 
     .hud {
       display: flex;
+      align-items: baseline;
       justify-content: space-between;
-      gap: 8px;
-      padding: 6px 10px;
+      gap: 10px;
+      padding: 10px 12px 4px;
       flex-shrink: 0;
       font-variant-numeric: tabular-nums;
     }
 
     .hud b {
-      font-weight: 650;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: .02em;
     }
 
     .hud small {
       color: var(--muted);
+      font-size: 11px;
     }
 
     .metrics {
-      display: flex;
-      gap: 10px;
-      padding: 0 10px 6px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0;
+      margin: 0 12px 8px;
+      padding: 8px 0;
       flex-shrink: 0;
       font-variant-numeric: tabular-nums;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .metrics div {
+      padding: 0 10px;
+      border-left: 1px solid var(--line);
+    }
+
+    .metrics div:first-child {
+      padding-left: 0;
+      border-left: 0;
     }
 
     .metrics span {
       color: var(--muted);
       font-size: 10px;
       text-transform: uppercase;
-      letter-spacing: .04em;
+      letter-spacing: .06em;
       display: block;
+      margin-bottom: 2px;
     }
 
     .metrics strong {
-      font-weight: 650;
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -.02em;
+    }
+
+    body.focus header,
+    body.focus .legend {
+      display: none;
+    }
+
+    body.focus #stage {
+      padding: 10px;
     }
 
     .track {
@@ -297,15 +341,16 @@
       <button type="button" data-panel="physics">Physics</button>
       <button type="button" data-panel="quality">Quality</button>
     </nav>
-    <kbd data-ctl="play">space pause · r restart · [ ] speed</kbd>
+    <kbd data-ctl="play">space pause · r restart · [ ] speed · esc header</kbd>
     <div class="bar">
       <label class="chip" data-ctl="n">N <select id="selN"></select></label>
       <label class="chip" data-ctl="block">block <select id="selB"></select></label>
       <button class="act" id="play" type="button" data-ctl="play">Pause</button>
       <button class="act" id="restart" type="button" data-ctl="play">Restart</button>
-      <label class="chip" data-ctl="play">speed <input id="rate" type="range" min="0.01" max="8" step="0.01"
+      <label class="chip" data-ctl="play">speed <input id="rate" type="range" min="0.01" max="64" step="0.01"
           value="1" /></label>
       <span class="chip" id="headline" data-ctl="headline"></span>
+      <button class="act" id="focusOn" type="button">Focus</button>
     </div>
   </header>
   <div id="stage">
@@ -337,10 +382,16 @@
       gpu_naive: getComputedStyle(document.documentElement).getPropertyValue("--gpu-naive").trim() || "#c084fc",
       gpu_opt: getComputedStyle(document.documentElement).getPropertyValue("--gpu-opt").trim() || "#34d399",
     };
+    const LABELS = {
+      cpu_naive: "CPU Naive",
+      cpu_opt: "CPU Optimized",
+      gpu_naive: "GPU Naive",
+      gpu_opt: "GPU Optimized",
+    };
     const WORLD = DATA.world_size, HALF = DATA.world_half, AGENT_R = DATA.agent_radius;
     const XY_SCALE = 32767 / HALF;
     const GOALS = ["#7dd3fc", "#86efac", "#fde047", "#fdba74", "#f9a8d4", "#c4b5fd", "#67e8f9", "#fca5a5"];
-    const RATE_MIN = 0.01, RATE_MAX = 8;
+    const RATE_MIN = 0.01, RATE_MAX = 64;
     const clips = DATA.clips || [];
     const sweeps = DATA.sweeps || [];
 
@@ -426,49 +477,17 @@
       const copy = (u8.byteOffset % 2 === 0) ? u8 : u8.slice();
       return new Int16Array(copy.buffer, copy.byteOffset, copy.byteLength / 2);
     }
-    const decodeUrl = URL.createObjectURL(new Blob([
-      undeltaI16.toString(),
-      gunzip.toString(),
-      parseRec.toString(),
-      `async function recBuffer(file) {
-        const res = await fetch(file);
-        if (!res.ok) throw new Error("missing " + file);
-        if (file.endsWith(".gz") && res.body && typeof DecompressionStream !== "undefined")
-          return new Response(res.body.pipeThrough(new DecompressionStream("gzip"))).arrayBuffer();
-        const buf = await res.arrayBuffer();
-        const u8 = new Uint8Array(buf);
-        if (u8.length >= 2 && u8[0] === 0x1f && u8[1] === 0x8b) {
-          const g = await gunzip(u8);
-          return g.buffer.slice(g.byteOffset, g.byteOffset + g.byteLength);
-        }
-        return buf;
-      }
-      self.onmessage = async (ev) => {
-        const raw = ev.data;
-        try {
-          const t = parseRec(await recBuffer(raw.file), raw);
-          self.postMessage(t, [t.xy.buffer, t.goal.buffer]);
-        } catch (err) {
-          self.postMessage({ error: String(err && err.message || err) });
-        }
-      };`,
-    ].join("\n"), { type: "text/javascript" }));
     const trackCache = {};
-    function inflateFile(raw) {
-      return new Promise((resolve, reject) => {
-        const w = new Worker(decodeUrl);
-        w.onmessage = (e) => {
-          w.terminate();
-          if (!e.data || e.data.error)
-            reject(new Error((e.data && e.data.error) || "clip decode failed"));
-          else resolve(e.data);
-        };
-        w.onerror = (e) => {
-          w.terminate();
-          reject(new Error(e.message || "clip decode failed"));
-        };
-        w.postMessage({ file: raw.file, name: raw.name, xy_delta: raw.xy_delta });
-      });
+    async function inflateFile(raw) {
+      const res = await fetch(raw.file);
+      if (!res.ok) throw new Error("missing " + raw.file);
+      let buf = await res.arrayBuffer();
+      const u8in = new Uint8Array(buf);
+      if (u8in.length >= 2 && u8in[0] === 0x1f && u8in[1] === 0x8b) {
+        const u8 = await gunzip(u8in);
+        buf = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
+      }
+      return parseRec(buf, raw);
     }
     async function inflate(raw) {
       if (raw.file) {
@@ -555,7 +574,7 @@
     const legend = document.getElementById("legend");
     Object.keys(COLORS).forEach((k) => {
       const s = document.createElement("span");
-      s.innerHTML = `<i style="background:${COLORS[k]}"></i>${k}`;
+      s.innerHTML = `<i style="background:${COLORS[k]}"></i>${LABELS[k] || k}`;
       legend.appendChild(s);
     });
 
@@ -567,8 +586,15 @@
     let obstacles = [];
     let span = 0, spanBlock = 0, scale = 1, scaleBlock = 1;
 
+    function layoutGrid(gridEl, n) {
+      const rows = n <= 2 ? 1 : 2;
+      const cols = Math.max(1, Math.ceil(n / rows));
+      gridEl.style.setProperty("--cols", String(cols));
+      gridEl.style.setProperty("--rows", String(rows));
+    }
+
     function fillGrid(gridEl, list, emptyMsg) {
-      gridEl.style.setProperty("--cols", String(Math.max(1, list.length)));
+      layoutGrid(gridEl, list.length);
       gridEl.innerHTML = "";
       if (!list.length) {
         gridEl.innerHTML = `<p class="empty">${emptyMsg}</p>`;
@@ -714,6 +740,13 @@
       return ans;
     }
     function color(name) { return COLORS[name] || "#94a3b8"; }
+    function prettyName(name) {
+      if (!name) return "";
+      if (LABELS[name]) return LABELS[name];
+      return String(name).split("_").map((p, i) =>
+        i === 0 ? p.toUpperCase() : p.charAt(0).toUpperCase() + p.slice(1)
+      ).join(" ");
+    }
     function refOf(list) {
       return list.find((t) => t.name === "cpu_opt")
         || list.find((t) => t.name === "gpu_naive")
@@ -727,7 +760,7 @@
     }
     function refLabel(list) {
       const r = refOf(list);
-      return r ? r.name : "ref";
+      return r ? prettyName(r.name) : "ref";
     }
     function focusTrack(list) {
       return list.find((t) => t.name === "gpu_opt")
@@ -740,6 +773,7 @@
       const b = e.target.closest("button[data-panel]");
       if (!b) return;
       panel = b.dataset.panel;
+      setFocus(false);
       document.querySelectorAll("#tabs button").forEach((x) => x.setAttribute("aria-selected", x === b ? "true" : "false"));
       document.querySelectorAll(".panel").forEach((p) => p.classList.toggle("on", p.id === "panel-" + panel));
       syncCtl();
@@ -775,15 +809,26 @@
       hold = now;
       document.getElementById("rate").value = String(rate);
     }
+    function setFocus(on) {
+      document.body.classList.toggle("focus", on);
+    }
+    document.getElementById("focusOn").onclick = () => setFocus(true);
     document.getElementById("play").onclick = toggle;
     document.getElementById("restart").onclick = restart;
     document.getElementById("rate").oninput = (e) => setRate(+e.target.value);
     addEventListener("keydown", (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.target.closest("input, select, textarea")) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setFocus(false);
+        return;
+      }
       if (!(CTL[panel] || {}).play) return;
       if (e.code === "Space") { e.preventDefault(); toggle(); }
-      if (e.key === "r") restart();
-      if (e.key === "[") setRate(rate * 0.5);
-      if (e.key === "]") setRate(rate * 2);
+      else if (e.key === "r" || e.key === "R") { e.preventDefault(); restart(); }
+      else if (e.key === "[") { e.preventDefault(); setRate(rate * 0.5); }
+      else if (e.key === "]") { e.preventDefault(); setRate(rate * 2); }
     });
     function showLoadError(el, err) {
       el.innerHTML = `<p class="empty">${err}</p>`;
@@ -845,11 +890,99 @@
       return { ctx, w, h };
     }
 
-    function plot(cv, series, until, yLabel) {
+    function niceStep(span, target) {
+      const raw = span / Math.max(1, target);
+      const exp = Math.pow(10, Math.floor(Math.log10(Math.max(raw, 1e-12))));
+      const err = raw / exp;
+      const nf = err <= 1.5 ? 1 : err <= 3 ? 2 : err <= 7 ? 5 : 10;
+      return nf * exp;
+    }
+    function ticks0(max, target) {
+      const step = niceStep(max, target);
+      const top = Math.ceil(max / step) * step;
+      const ticks = [];
+      for (let v = 0; v <= top + step * 0.25; v += step) ticks.push(v);
+      return { ticks, max: Math.max(top, max) };
+    }
+    function ticksRange(min, max, target) {
+      const step = niceStep(max - min, target);
+      const lo = Math.floor(min / step) * step;
+      const hi = Math.ceil(max / step) * step;
+      const ticks = [];
+      for (let v = lo; v <= hi + step * 0.25; v += step) ticks.push(v);
+      return ticks;
+    }
+    function ticksLog(min, max) {
+      const ticks = [];
+      let mag = Math.pow(10, Math.floor(Math.log10(Math.max(min, 1))));
+      while (mag <= max * 1.05) {
+        for (const m of [1, 2, 5]) {
+          const v = m * mag;
+          if (v >= min * 0.98 && v <= max * 1.02) ticks.push(v);
+        }
+        mag *= 10;
+      }
+      return ticks.length ? ticks : [min, max];
+    }
+    function fmtTick(v) {
+      if (!isFinite(v)) return "";
+      const a = Math.abs(v);
+      if (a >= 10000) return (v / 1000).toFixed(a % 1000 === 0 ? 0 : 1) + "k";
+      if (a >= 100 || Math.abs(v - Math.round(v)) < 1e-6) return String(Math.round(v));
+      if (a >= 10) return v.toFixed(1);
+      return v.toFixed(2);
+    }
+    function paintAxes(ctx, pad, iw, ih, h, xTicks, yTicks, tx, ty, xLabel, yLabel) {
+      ctx.strokeStyle = "#1f2a3d";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(pad.l, pad.t);
+      ctx.lineTo(pad.l, pad.t + ih);
+      ctx.lineTo(pad.l + iw, pad.t + ih);
+      ctx.stroke();
+      ctx.font = "11px ui-sans-serif, system-ui";
+      for (const v of yTicks) {
+        const y = ty(v);
+        ctx.strokeStyle = "#1f2a3d";
+        ctx.globalAlpha = 0.55;
+        ctx.beginPath();
+        ctx.moveTo(pad.l, y);
+        ctx.lineTo(pad.l + iw, y);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = "#8b9bb8";
+        ctx.textAlign = "right";
+        ctx.textBaseline = "middle";
+        ctx.fillText(fmtTick(v), pad.l - 6, y);
+      }
+      for (const v of xTicks) {
+        const x = tx(v);
+        ctx.strokeStyle = "#1f2a3d";
+        ctx.globalAlpha = 0.45;
+        ctx.beginPath();
+        ctx.moveTo(x, pad.t);
+        ctx.lineTo(x, pad.t + ih);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = "#8b9bb8";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "top";
+        ctx.fillText(fmtTick(v), x, pad.t + ih + 6);
+      }
+      ctx.textAlign = "left";
+      ctx.textBaseline = "alphabetic";
+      ctx.fillStyle = "#8b9bb8";
+      ctx.fillText(yLabel, 8, 14);
+      ctx.textAlign = "right";
+      ctx.fillText(xLabel, pad.l + iw, h - 8);
+      ctx.textAlign = "left";
+    }
+
+    function plot(cv, series, until, yLabel, xLabel) {
       const s = sizeCanvas(cv);
       if (!s) return;
       const { ctx, w, h } = s;
-      const pad = { l: 48, r: 12, t: 16, b: 28 };
+      const pad = { l: 52, r: 16, t: 20, b: 36 };
       ctx.fillStyle = "#101827";
       ctx.fillRect(0, 0, w, h);
       let maxY = 0, maxX = 1;
@@ -859,16 +992,13 @@
         for (let i = 0; i < n; i++) maxY = Math.max(maxY, ser.ys[i] || 0);
       }
       if (maxY <= 0) maxY = 1;
+      const yAx = ticks0(maxY, 5);
+      maxY = yAx.max;
+      const xTicks = ticksRange(0, maxX, 6);
       const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
-      ctx.strokeStyle = "#1f2a3d";
-      ctx.beginPath();
-      ctx.moveTo(pad.l, pad.t); ctx.lineTo(pad.l, pad.t + ih); ctx.lineTo(pad.l + iw, pad.t + ih);
-      ctx.stroke();
-      ctx.fillStyle = "#8b9bb8";
-      ctx.font = "11px ui-sans-serif, system-ui";
-      ctx.fillText(yLabel, 8, 14);
-      ctx.fillText(maxY.toFixed(2), 8, pad.t + 10);
-      ctx.fillText("0", 8, pad.t + ih);
+      const tx = (x) => pad.l + (x / Math.max(1, maxX)) * iw;
+      const ty = (y) => pad.t + ih - (y / maxY) * ih;
+      paintAxes(ctx, pad, iw, ih, h, xTicks, yAx.ticks, tx, ty, xLabel, yLabel);
       for (const ser of series) {
         const n = until == null ? ser.ys.length : Math.min(until, ser.ys.length);
         if (n < 2) continue;
@@ -876,8 +1006,7 @@
         ctx.lineWidth = 1.6;
         ctx.beginPath();
         for (let i = 0; i < n; i++) {
-          const x = pad.l + (i / Math.max(1, maxX)) * iw;
-          const y = pad.t + ih - (ser.ys[i] / maxY) * ih;
+          const x = tx(i), y = ty(ser.ys[i] || 0);
           if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
         }
         ctx.stroke();
@@ -888,7 +1017,7 @@
       const s = sizeCanvas(cv);
       if (!s) return;
       const { ctx, w, h } = s;
-      const pad = { l: 52, r: 12, t: 16, b: 32 };
+      const pad = { l: 52, r: 16, t: 20, b: 36 };
       ctx.fillStyle = "#101827";
       ctx.fillRect(0, 0, w, h);
       let minX = Infinity, maxX = -Infinity, maxY = 0;
@@ -902,6 +1031,9 @@
       }
       if (!isFinite(minX) || maxX <= minX) { minX = 1; maxX = 10; }
       if (maxY <= 0) maxY = 1;
+      const yAx = ticks0(maxY, 5);
+      maxY = yAx.max;
+      const xTicks = logx ? ticksLog(minX, maxX) : ticksRange(minX, maxX, 6);
       const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
       const tx = (x) => {
         if (!logx) return pad.l + ((x - minX) / (maxX - minX)) * iw;
@@ -909,14 +1041,7 @@
         return pad.l + ((Math.log(Math.max(x, 1)) - a) / Math.max(1e-9, b - a)) * iw;
       };
       const ty = (y) => pad.t + ih - (y / maxY) * ih;
-      ctx.strokeStyle = "#1f2a3d";
-      ctx.beginPath();
-      ctx.moveTo(pad.l, pad.t); ctx.lineTo(pad.l, pad.t + ih); ctx.lineTo(pad.l + iw, pad.t + ih);
-      ctx.stroke();
-      ctx.fillStyle = "#8b9bb8";
-      ctx.font = "11px ui-sans-serif, system-ui";
-      ctx.fillText(yLabel, 8, 14);
-      ctx.fillText(xLabel, pad.l + iw - 40, h - 8);
+      paintAxes(ctx, pad, iw, ih, h, xTicks, yAx.ticks, tx, ty, xLabel, yLabel);
       for (const ser of series) {
         const pts = ser.pts.filter((p) => isFinite(p.x) && isFinite(p.y)).sort((a, b) => a.x - b.x);
         if (pts.length < 1) continue;
@@ -967,15 +1092,37 @@
       });
     }
 
+    const timeSmooth = new WeakMap();
+    function smoothYs(ys) {
+      const n = ys.length;
+      if (n < 3) return ys;
+      const win = Math.min(n, Math.max(9, ((n / 80) | 0) | 1));
+      const out = new Float32Array(n);
+      let sum = 0;
+      for (let i = 0; i < n; i++) {
+        sum += ys[i];
+        if (i >= win) sum -= ys[i - win];
+        out[i] = sum / (i + 1 < win ? i + 1 : win);
+      }
+      return out;
+    }
+    function stepMsSmooth(t) {
+      let ys = timeSmooth.get(t);
+      if (!ys) {
+        ys = smoothYs(t.step_ms);
+        timeSmooth.set(t, ys);
+      }
+      return ys;
+    }
     function drawTime(until) {
       plot(document.getElementById("cTime"),
-        tracks.map((t) => ({ color: color(t.name), ys: t.step_ms })),
-        until, "step_ms");
+        tracks.map((t) => ({ color: color(t.name), ys: stepMsSmooth(t) })),
+        until, "ms / step", "step");
     }
     function drawPhys(until) {
       plot(document.getElementById("cPhys"),
         tracks.map((t) => ({ color: color(t.name), ys: t.speed_mean })),
-        until, "|v| mean");
+        until, "|v| mean", "step");
     }
     function drawScale() {
       const block = +selB.value || defaultBlock;
@@ -1014,7 +1161,7 @@
       }
       const base = refMs(rows);
       const bars = rows.map((r) => ({
-        label: r.name || r.mode,
+        label: prettyName(r.name || r.mode),
         y: base > 0 ? base / r.avg_step_ms : 0,
         color: color(r.name || r.mode),
       }));
@@ -1076,11 +1223,12 @@
           const p = viewPanes[i], t = p.t, f = frames[i];
           const last = t.n_steps;
           const sp = rMs > 0 ? (rMs / t.avg_step_ms) : 0;
-          p.title.textContent = panel === "block" ? ("block " + t.block) : t.name;
-          p.meta.textContent = `N=${t.n_agents}`;
+          p.title.textContent = panel === "block" ? ("block " + t.block) : prettyName(t.name);
+          p.title.style.color = panel === "block" ? "" : color(t.name);
+          p.meta.textContent = t.n_agents + " agents";
           p.metrics.innerHTML =
-            `<div><span>ms/step</span><strong>${t.avg_step_ms.toFixed(2)}</strong></div>` +
-            `<div><span>×</span><strong>${sp.toFixed(2)}</strong></div>` +
+            `<div><span>ms / step</span><strong>${t.avg_step_ms.toFixed(2)}</strong></div>` +
+            `<div><span>vs ref</span><strong>${sp.toFixed(2)}×</strong></div>` +
             `<div><span>fps</span><strong>${t.fps.toFixed(0)}</strong></div>`;
           p.bar.style.width = (last ? (100 * f / last) : 0) + "%";
           drawWorld(p, f);

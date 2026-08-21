@@ -299,7 +299,9 @@ class _ClipHandler(SimpleHTTPRequestHandler):
 
     def end_headers(self) -> None:
         path = self.path.split("?", 1)[0]
-        if path.endswith(".gz") or path.endswith(".rec"):
+        if path.endswith(".html"):
+            self.send_header("Cache-Control", "no-store")
+        elif path.endswith(".gz") or path.endswith(".rec"):
             self.send_header("Cache-Control", "public, max-age=86400")
         super().end_headers()
 
@@ -309,8 +311,18 @@ class _ClipHandler(SimpleHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError) as err:
             log("WARN", "dashboard", type(err).__name__)
 
+    def do_GET(self) -> None:
+        if self.path.split("?", 1)[0] == "/favicon.ico":
+            self.send_response(204)
+            self.end_headers()
+            return
+        super().do_GET()
+
     def log_message(self, fmt: str, *args) -> None:
-        log("INFO", "dashboard", fmt % args)
+        msg = fmt % args
+        if "favicon.ico" in msg:
+            return
+        log("INFO", "dashboard", msg)
 
 
 def serve(open_browser: bool) -> None:

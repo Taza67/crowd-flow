@@ -34,22 +34,35 @@ CLIP_BLOCK_N = 2000
 CPU_WORKERS = 4
 
 
+def bind_clip_files(data: dict) -> dict:
+    for clip in data.get("clips") or []:
+        for t in clip.get("tracks") or []:
+            rel = t.get("file") or ""
+            name = Path(rel).name
+            src = CLIP_DIR / name
+            if src.is_file():
+                t["file"] = f"{CLIP_DIR.name}/{name}"
+    return data
+
+
 def load_packet() -> dict:
     if PACKET.is_file():
-        return json.loads(PACKET.read_text(encoding="utf-8"))
-    if not OUT.is_file():
+        data = json.loads(PACKET.read_text(encoding="utf-8"))
+    elif not OUT.is_file():
         die("dashboard", f"missing {OUT}  run make dashboard first")
-    html = OUT.read_text(encoding="utf-8")
-    i = html.find(_DATA_MARK)
-    if i < 0:
-        die("dashboard", f"no DATA in {OUT}")
-    i += len(_DATA_MARK)
-    j = html.find(";\n", i)
-    if j < 0:
-        j = html.find(";", i)
-    if j < 0:
-        die("dashboard", f"truncated DATA in {OUT}")
-    return json.loads(html[i:j])
+    else:
+        html = OUT.read_text(encoding="utf-8")
+        i = html.find(_DATA_MARK)
+        if i < 0:
+            die("dashboard", f"no DATA in {OUT}")
+        i += len(_DATA_MARK)
+        j = html.find(";\n", i)
+        if j < 0:
+            j = html.find(";", i)
+        if j < 0:
+            die("dashboard", f"truncated DATA in {OUT}")
+        data = json.loads(html[i:j])
+    return bind_clip_files(data)
 
 
 def write_dashboard(data: dict) -> Path:
