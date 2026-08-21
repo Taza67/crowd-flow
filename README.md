@@ -237,4 +237,4 @@ Project link : [https://github.com/Taza67/crowd-flow](https://github.com/Taza67/
 [c-url]: https://fr.wikipedia.org/wiki/C_(langage)
 [cuda-shield]: https://img.shields.io/badge/CUDA-76B900.svg?logo=nvidia&logoColor=white
 [cuda-url]: https://developer.nvidia.com/cuda-toolkit
-[product-screenshot]: images/dashboard-scene.mp4
+[product-screenshot]: images/dashboard-scene.gif
