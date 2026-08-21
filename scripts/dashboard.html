@@ -1,0 +1,1023 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>crowd-flow dashboard</title>
+  <style>
+    :root {
+      --bg: #070b14;
+      --card: #101827;
+      --line: #1f2a3d;
+      --text: #e8eefc;
+      --muted: #8b9bb8;
+      --accent: #5eead4;
+      --cpu-naive: #fb923c;
+      --cpu-opt: #38bdf8;
+      --gpu-naive: #c084fc;
+      --gpu-opt: #34d399;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font: 13px/1.35 ui-sans-serif, system-ui, sans-serif;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      background: radial-gradient(1200px 500px at 10% -20%, #12203a 0%, transparent 50%), var(--bg);
+    }
+
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px 14px;
+      padding: 8px 14px;
+      border-bottom: 1px solid var(--line);
+      flex-shrink: 0;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 650;
+      letter-spacing: .04em;
+    }
+
+    h1 span {
+      color: var(--accent);
+    }
+
+    nav {
+      display: flex;
+      gap: 2px;
+      background: #0b1220;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 2px;
+    }
+
+    nav button {
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      padding: 6px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    nav button[aria-selected="true"] {
+      background: var(--card);
+      color: var(--text);
+    }
+
+    .bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-left: auto;
+    }
+
+    button.act,
+    .chip,
+    select {
+      background: #182338;
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 5px 10px;
+    }
+
+    button.act {
+      cursor: pointer;
+    }
+
+    button.act:hover {
+      border-color: var(--accent);
+    }
+
+    .chip {
+      color: var(--muted);
+    }
+
+    .chip b {
+      color: var(--text);
+      font-weight: 650;
+    }
+
+    select {
+      cursor: pointer;
+    }
+
+    input[type=range] {
+      width: 100px;
+      accent-color: var(--accent);
+    }
+
+    kbd {
+      font: 11px ui-monospace, monospace;
+      color: var(--muted);
+    }
+
+    #stage {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      padding: 8px 12px 10px;
+      gap: 8px;
+    }
+
+    .panel {
+      display: none;
+      flex: 1;
+      min-height: 0;
+      flex-direction: column;
+    }
+
+    .panel.on {
+      display: flex;
+    }
+
+    .empty {
+      margin: auto;
+      color: var(--muted);
+      text-align: center;
+      max-width: 28rem;
+    }
+
+    #grid,
+    #gridBlock {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      gap: 8px;
+      grid-template-columns: repeat(var(--cols, 4), minmax(0, 1fr));
+      grid-template-rows: minmax(0, 1fr);
+    }
+
+    article {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+    }
+
+    .hud {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 6px 10px;
+      flex-shrink: 0;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .hud b {
+      font-weight: 650;
+    }
+
+    .hud small {
+      color: var(--muted);
+    }
+
+    .metrics {
+      display: flex;
+      gap: 10px;
+      padding: 0 10px 6px;
+      flex-shrink: 0;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .metrics span {
+      color: var(--muted);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      display: block;
+    }
+
+    .metrics strong {
+      font-weight: 650;
+    }
+
+    .track {
+      height: 3px;
+      background: #0b1220;
+      flex-shrink: 0;
+    }
+
+    .track i {
+      display: block;
+      height: 100%;
+      width: 0;
+      background: var(--accent);
+    }
+
+    .world {
+      flex: 1;
+      min-height: 0;
+      position: relative;
+    }
+
+    .world canvas {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      background: #0b1220;
+    }
+
+    .chart-wrap {
+      flex: 1;
+      min-height: 0;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      position: relative;
+    }
+
+    .chart-wrap canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      flex-shrink: 0;
+    }
+
+    .legend i {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+      margin-right: 4px;
+    }
+
+    .bar [hidden],
+    kbd[hidden],
+    .legend[hidden] {
+      display: none !important;
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <h1>crowd-flow <span>dashboard</span></h1>
+    <nav id="tabs" aria-label="views">
+      <button type="button" data-panel="scene" aria-selected="true">Scene</button>
+      <button type="button" data-panel="block">Block</button>
+      <button type="button" data-panel="time">Time</button>
+      <button type="button" data-panel="scaling">Scaling</button>
+      <button type="button" data-panel="physics">Physics</button>
+      <button type="button" data-panel="quality">Quality</button>
+    </nav>
+    <kbd data-ctl="play">space pause · r restart · [ ] speed</kbd>
+    <div class="bar">
+      <label class="chip" data-ctl="n">N <select id="selN"></select></label>
+      <label class="chip" data-ctl="block">block <select id="selB"></select></label>
+      <button class="act" id="play" type="button" data-ctl="play">Pause</button>
+      <button class="act" id="restart" type="button" data-ctl="play">Restart</button>
+      <label class="chip" data-ctl="play">speed <input id="rate" type="range" min="0.01" max="8" step="0.01"
+          value="1" /></label>
+      <span class="chip" id="headline" data-ctl="headline"></span>
+    </div>
+  </header>
+  <div id="stage">
+    <div class="legend" id="legend" data-ctl="legend"></div>
+    <section class="panel on" id="panel-scene">
+      <div id="grid"></div>
+    </section>
+    <section class="panel" id="panel-block">
+      <div id="gridBlock"></div>
+    </section>
+    <section class="panel" id="panel-time">
+      <div class="chart-wrap"><canvas id="cTime"></canvas></div>
+    </section>
+    <section class="panel" id="panel-scaling">
+      <div class="chart-wrap"><canvas id="cScale"></canvas></div>
+    </section>
+    <section class="panel" id="panel-physics">
+      <div class="chart-wrap"><canvas id="cPhys"></canvas></div>
+    </section>
+    <section class="panel" id="panel-quality">
+      <div class="chart-wrap"><canvas id="cQual"></canvas></div>
+    </section>
+  </div>
+  <script>
+    const DATA = __DATA__;
+    const COLORS = {
+      cpu_naive: getComputedStyle(document.documentElement).getPropertyValue("--cpu-naive").trim() || "#fb923c",
+      cpu_opt: getComputedStyle(document.documentElement).getPropertyValue("--cpu-opt").trim() || "#38bdf8",
+      gpu_naive: getComputedStyle(document.documentElement).getPropertyValue("--gpu-naive").trim() || "#c084fc",
+      gpu_opt: getComputedStyle(document.documentElement).getPropertyValue("--gpu-opt").trim() || "#34d399",
+    };
+    const WORLD = DATA.world_size, HALF = DATA.world_half, AGENT_R = DATA.agent_radius;
+    const XY_SCALE = 32767 / HALF;
+    const GOALS = ["#7dd3fc", "#86efac", "#fde047", "#fdba74", "#f9a8d4", "#c4b5fd", "#67e8f9", "#fca5a5"];
+    const RATE_MIN = 0.01, RATE_MAX = 8;
+    const clips = DATA.clips || [];
+    const sweeps = DATA.sweeps || [];
+
+    function b64bytes(s) {
+      const bin = atob(s);
+      const u8 = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+      return u8;
+    }
+    function parseRec(buf, meta) {
+      const v = new DataView(buf);
+      if (v.byteLength < 16
+        || v.getUint8(0) !== 0x43 || v.getUint8(1) !== 0x46
+        || v.getUint8(2) !== 0x31 || v.getUint8(3) !== 0)
+        throw new Error((meta.file || "clip") + ": not a rec file");
+      const nObs = v.getUint32(4, true);
+      const nAgents = v.getUint32(8, true);
+      const nFrames = v.getUint32(12, true);
+      let off = 16;
+      const obstacles = [];
+      for (let i = 0; i < nObs; i++) {
+        obstacles.push({
+          x: v.getFloat32(off, true),
+          y: v.getFloat32(off + 4, true),
+          radius: v.getFloat32(off + 8, true),
+        });
+        off += 12;
+      }
+      const step_ms = [], speed_mean = [], speed_max = [];
+      const xy = new Int16Array(nFrames * nAgents * 2);
+      const goal = new Uint8Array(nFrames * nAgents);
+      let xi = 0, gi = 0;
+      for (let f = 0; f < nFrames; f++) {
+        step_ms.push(v.getFloat32(off, true)); off += 4;
+        speed_mean.push(Math.round(v.getFloat32(off, true) * 1e4) / 1e4); off += 4;
+        speed_max.push(Math.round(v.getFloat32(off, true) * 1e4) / 1e4); off += 4;
+        for (let i = 0; i < nAgents; i++) {
+          xy[xi++] = v.getInt16(off, true); off += 2;
+          xy[xi++] = v.getInt16(off, true); off += 2;
+        }
+        for (let i = 0; i < nAgents; i++) goal[gi++] = v.getUint8(off++);
+      }
+      if (off !== v.byteLength)
+        throw new Error((meta.file || "clip") + ": rec size mismatch");
+      const timed = step_ms.slice(1);
+      const avg = timed.length ? timed.reduce((a, b) => a + b, 0) / timed.length : 0;
+      const total = timed.reduce((a, b) => a + b, 0);
+      const cum = [0];
+      let acc = 0;
+      for (let i = 1; i < step_ms.length; i++) { acc += step_ms[i]; cum.push(acc); }
+      return {
+        name: meta.name,
+        n_agents: nAgents,
+        n_steps: timed.length,
+        total_ms: total,
+        avg_step_ms: avg,
+        min_step_ms: timed.length ? Math.min.apply(null, timed) : 0,
+        max_step_ms: timed.length ? Math.max.apply(null, timed) : 0,
+        fps: avg > 0 ? 1000 / avg : 0,
+        step_ms, speed_mean, speed_max, xy, goal, cum, obstacles,
+      };
+    }
+    async function gunzip(u8) {
+      if (typeof DecompressionStream === "undefined")
+        throw new Error("This browser cannot gunzip clip data.");
+      const stream = new Blob([u8]).stream().pipeThrough(new DecompressionStream("gzip"));
+      return new Uint8Array(await new Response(stream).arrayBuffer());
+    }
+    function asI16(u8) {
+      const copy = (u8.byteOffset % 2 === 0) ? u8 : u8.slice();
+      return new Int16Array(copy.buffer, copy.byteOffset, copy.byteLength / 2);
+    }
+    function undeltaI16(xy, nAgents, nFrames) {
+      const frame = nAgents * 2;
+      for (let f = 1; f < nFrames; f++) {
+        const b = f * frame, p = (f - 1) * frame;
+        for (let i = 0; i < frame; i++) xy[b + i] = (xy[b + i] + xy[p + i]) << 16 >> 16;
+      }
+    }
+    async function inflate(raw) {
+      if (raw.file) {
+        if (location.protocol === "file:")
+          throw new Error("Open via make dashboard (local server). file:// cannot load clips.");
+        const res = await fetch(raw.file);
+        if (!res.ok) throw new Error("missing " + raw.file);
+        let buf = await res.arrayBuffer();
+        if ((raw.file || "").endsWith(".gz")) {
+          const u8 = await gunzip(new Uint8Array(buf));
+          buf = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
+        }
+        const t = parseRec(buf, raw);
+        if (raw.xy_delta) undeltaI16(t.xy, t.n_agents, t.step_ms.length);
+        return t;
+      }
+      const cum = [0];
+      let acc = 0;
+      for (let i = 1; i < raw.step_ms.length; i++) { acc += raw.step_ms[i]; cum.push(acc); }
+      let xyU = b64bytes(raw.xy);
+      let goalU = b64bytes(raw.goal);
+      if (raw.xy_gz) {
+        xyU = await gunzip(xyU);
+        goalU = await gunzip(goalU);
+      }
+      const xy = asI16(xyU);
+      if (raw.xy_delta) undeltaI16(xy, raw.n_agents, raw.step_ms.length);
+      return { ...raw, cum, xy, goal: goalU };
+    }
+
+    const selN = document.getElementById("selN");
+    const selB = document.getElementById("selB");
+    let panel = "scene";
+    const clipNs = [...new Set(clips.map((c) => c.n))].sort((a, b) => a - b);
+    const sweepNs = [...new Set(sweeps.map((r) => r.n))].sort((a, b) => a - b);
+    const defaultBlock = (DATA.meta && DATA.meta.default_block) || 256;
+    const preferBlockN = (DATA.meta && DATA.meta.clip_block_n) || 2000;
+
+    function uniqSorted(xs) {
+      return [...new Set(xs)].sort((a, b) => a - b);
+    }
+    function blockGalleryNs() {
+      const byN = {};
+      for (const c of clips) {
+        for (const t of c.tracks || []) {
+          if (t.name !== "gpu_opt") continue;
+          (byN[c.n] || (byN[c.n] = new Set())).add(c.block);
+        }
+      }
+      return uniqSorted(Object.keys(byN).map(Number).filter((n) => byN[n].size > 1));
+    }
+    function nChoices() {
+      if (panel === "block") return blockGalleryNs();
+      if (panel === "quality") return sweepNs;
+      return clipNs;
+    }
+    function bChoices() {
+      if (panel === "scaling")
+        return uniqSorted(sweeps.filter((r) => r.mode.startsWith("gpu_")).map((r) => r.block));
+      if (panel === "quality")
+        return uniqSorted(sweeps.filter((r) => r.n === +selN.value && r.mode.startsWith("gpu_")).map((r) => r.block));
+      return [];
+    }
+    function fillSelect(el, values, prefer) {
+      const want = values.map(String);
+      const prev = el.value;
+      el.innerHTML = "";
+      want.forEach((v) => {
+        const o = document.createElement("option");
+        o.value = v;
+        o.textContent = v;
+        el.appendChild(o);
+      });
+      if (want.includes(prev)) el.value = prev;
+      else if (prefer != null && want.includes(String(prefer))) el.value = String(prefer);
+      else if (want.length) el.value = want[0];
+    }
+
+    function findClip(n) {
+      return clips.find((c) => c.n === n && c.block === defaultBlock)
+        || clips.find((c) => c.n === n)
+        || null;
+    }
+
+    let clip = findClip(clipNs[0]);
+
+    const legend = document.getElementById("legend");
+    Object.keys(COLORS).forEach((k) => {
+      const s = document.createElement("span");
+      s.innerHTML = `<i style="background:${COLORS[k]}"></i>${k}`;
+      legend.appendChild(s);
+    });
+
+    const grid = document.getElementById("grid");
+    const gridBlock = document.getElementById("gridBlock");
+    const sweepSteps = (DATA.meta && DATA.meta.sweep_steps) || 200;
+    let panes = [], panesBlock = [];
+    let tracks = [], tracksBlock = [];
+    let obstacles = [];
+    let span = 0, spanBlock = 0, scale = 1, scaleBlock = 1;
+
+    function fillGrid(gridEl, list, emptyMsg) {
+      gridEl.style.setProperty("--cols", String(Math.max(1, list.length)));
+      gridEl.innerHTML = "";
+      if (!list.length) {
+        gridEl.innerHTML = `<p class="empty">${emptyMsg}</p>`;
+        return [];
+      }
+      return list.map((t) => {
+        const art = document.createElement("article");
+        art.innerHTML = `<div class="hud"><b></b><small></small></div>
+          <div class="metrics"></div>
+          <div class="track"><i></i></div>
+          <div class="world"><canvas></canvas></div>`;
+        gridEl.appendChild(art);
+        const canvas = art.querySelector("canvas");
+        return {
+          t, art, canvas, ctx: canvas.getContext("2d"),
+          title: art.querySelector("b"),
+          meta: art.querySelector("small"),
+          metrics: art.querySelector(".metrics"),
+          bar: art.querySelector("i"),
+        };
+      });
+    }
+
+    function fitScale(ms) {
+      const fit = DATA.fit || 0;
+      return (fit > 0 && ms > 0) ? (fit * 1000) / ms : 1;
+    }
+
+    async function loadClip(c) {
+      clip = c;
+      tracks = c ? await Promise.all(c.tracks.map(inflate)) : [];
+      obstacles = (c && c.obstacles)
+        || (tracks[0] && tracks[0].obstacles)
+        || obstacles;
+      span = Math.max(0, ...tracks.map((t) => t.total_ms));
+      scale = fitScale(span);
+      panes = fillGrid(grid, tracks,
+        `No clip at this N. Scaling and Quality use the ${sweepSteps}-step sweep.`);
+    }
+
+    const blockCache = {};
+    async function loadBlock() {
+      const n = +selN.value;
+      if (blockCache[n]) {
+        tracksBlock = blockCache[n];
+      } else {
+        const rows = clips.filter((c) => c.n === n);
+        tracksBlock = [];
+        for (const c of rows) {
+          for (const t of c.tracks || []) {
+            if (t.name !== "gpu_opt") continue;
+            const x = await inflate(t);
+            x.block = c.block;
+            tracksBlock.push(x);
+          }
+        }
+        tracksBlock.sort((a, b) => a.block - b.block);
+        blockCache[n] = tracksBlock;
+      }
+      spanBlock = Math.max(0, ...tracksBlock.map((t) => t.total_ms));
+      scaleBlock = fitScale(spanBlock);
+      panesBlock = fillGrid(gridBlock, tracksBlock,
+        `No gpu_opt block clips (N=${n}).`);
+    }
+
+    let paused = false, rate = 1, origin = performance.now(), hold = 0;
+    const CTL = {
+      scene: { n: 1, play: 1, legend: 1, headline: 1 },
+      block: { n: 1, play: 1, headline: 1 },
+      time: { n: 1, play: 1, legend: 1, headline: 1 },
+      physics: { n: 1, play: 1, legend: 1, headline: 1 },
+      scaling: { block: 1, legend: 1 },
+      quality: { n: 1, block: 1, legend: 1, headline: 1 },
+    };
+    function syncCtl() {
+      const on = CTL[panel] || {};
+      document.querySelectorAll("[data-ctl]").forEach((el) => {
+        el.hidden = !on[el.dataset.ctl];
+      });
+      if (on.n) {
+        fillSelect(selN, nChoices(), panel === "block" ? preferBlockN : (clip && clip.n));
+        document.querySelector("[data-ctl=n]").hidden = nChoices().length <= 1;
+      }
+      if (on.block) {
+        fillSelect(selB, bChoices(), defaultBlock);
+        document.querySelector("[data-ctl=block]").hidden = bChoices().length <= 1;
+      }
+    }
+
+    function playScale() { return panel === "block" ? scaleBlock : scale; }
+    function activeSpan() { return panel === "block" ? spanBlock : span; }
+    function rawWallMs() {
+      if (paused) return hold;
+      return (performance.now() - origin) * rate * playScale();
+    }
+    function wallMs() {
+      const s = activeSpan();
+      return s > 0 ? Math.min(s, rawWallMs()) : 0;
+    }
+    function frameAt(cum, ms) {
+      let lo = 0, hi = cum.length - 1, ans = 0;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (cum[mid] <= ms) { ans = mid; lo = mid + 1; } else hi = mid - 1;
+      }
+      return ans;
+    }
+    function color(name) { return COLORS[name] || "#94a3b8"; }
+    function refOf(list) {
+      return list.find((t) => t.name === "cpu_opt")
+        || list.find((t) => t.name === "gpu_naive")
+        || list.find((t) => t.name === "gpu_opt")
+        || list[0]
+        || null;
+    }
+    function refMs(list) {
+      const r = refOf(list);
+      return r && r.avg_step_ms > 0 ? r.avg_step_ms : 0;
+    }
+    function refLabel(list) {
+      const r = refOf(list);
+      return r ? r.name : "ref";
+    }
+    function focusTrack(list) {
+      return list.find((t) => t.name === "gpu_opt")
+        || list.find((t) => t.name.startsWith("gpu_"))
+        || list.find((t) => t.name === "cpu_opt")
+        || list[0];
+    }
+
+    document.getElementById("tabs").addEventListener("click", async (e) => {
+      const b = e.target.closest("button[data-panel]");
+      if (!b) return;
+      panel = b.dataset.panel;
+      document.querySelectorAll("#tabs button").forEach((x) => x.setAttribute("aria-selected", x === b ? "true" : "false"));
+      document.querySelectorAll(".panel").forEach((p) => p.classList.toggle("on", p.id === "panel-" + panel));
+      syncCtl();
+      if (panel === "block") {
+        try { await loadBlock(); }
+        catch (err) { gridBlock.innerHTML = `<p class="empty">${err}</p>`; }
+      }
+      restart();
+    });
+
+    function toggle() {
+      if (!paused) {
+        hold = wallMs();
+        paused = true;
+        document.getElementById("play").textContent = "Play";
+        return;
+      }
+      if (activeSpan() > 0 && hold >= activeSpan()) return;
+      origin = performance.now() - hold / (rate * playScale());
+      paused = false;
+      document.getElementById("play").textContent = "Pause";
+    }
+    function restart() {
+      origin = performance.now();
+      hold = 0;
+      paused = false;
+      document.getElementById("play").textContent = "Pause";
+    }
+    function setRate(next) {
+      const now = wallMs();
+      rate = Math.min(RATE_MAX, Math.max(RATE_MIN, next));
+      origin = performance.now() - now / (rate * playScale());
+      hold = now;
+      document.getElementById("rate").value = String(rate);
+    }
+    document.getElementById("play").onclick = toggle;
+    document.getElementById("restart").onclick = restart;
+    document.getElementById("rate").oninput = (e) => setRate(+e.target.value);
+    addEventListener("keydown", (e) => {
+      if (!(CTL[panel] || {}).play) return;
+      if (e.code === "Space") { e.preventDefault(); toggle(); }
+      if (e.key === "r") restart();
+      if (e.key === "[") setRate(rate * 0.5);
+      if (e.key === "]") setRate(rate * 2);
+    });
+    selN.onchange = () => {
+      const on = CTL[panel] || {};
+      if (on.block) {
+        fillSelect(selB, bChoices(), defaultBlock);
+        document.querySelector("[data-ctl=block]").hidden = bChoices().length <= 1;
+      }
+      if (panel === "block") loadBlock().then(restart);
+      else loadClip(findClip(+selN.value)).then(restart);
+    };
+    selB.onchange = () => restart();
+
+    function drawWorld(p, f) {
+      const { canvas, ctx, t } = p;
+      const stage = canvas.parentElement;
+      const side = Math.max(1, Math.floor(Math.min(stage.clientWidth, stage.clientHeight)));
+      canvas.style.width = side + "px";
+      canvas.style.height = side + "px";
+      const dpr = devicePixelRatio || 1;
+      const w = side, h = side;
+      if (canvas.width !== (w * dpr | 0) || canvas.height !== (h * dpr | 0)) {
+        canvas.width = w * dpr; canvas.height = h * dpr;
+      }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.fillStyle = "#0b1220";
+      ctx.fillRect(0, 0, w, h);
+      ctx.fillStyle = "#152038";
+      ctx.strokeStyle = "#3d5a80";
+      ctx.lineWidth = 1.5;
+      for (const o of obstacles) {
+        const px = ((o.x + HALF) / WORLD) * w;
+        const py = ((HALF - o.y) / WORLD) * h;
+        const rr = (o.radius / WORLD) * w;
+        ctx.beginPath(); ctx.arc(px, py, rr, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      }
+      const n = t.n_agents;
+      const base = Math.min(f, t.n_steps) * n;
+      const r = Math.max(1.4, (AGENT_R / WORLD) * w);
+      for (let i = 0; i < n; i++) {
+        const x = t.xy[(base + i) * 2] / XY_SCALE;
+        const y = t.xy[(base + i) * 2 + 1] / XY_SCALE;
+        ctx.fillStyle = GOALS[t.goal[base + i] % GOALS.length];
+        ctx.beginPath();
+        ctx.arc(((x + HALF) / WORLD) * w, ((HALF - y) / WORLD) * h, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    function sizeCanvas(cv) {
+      const dpr = devicePixelRatio || 1;
+      const w = cv.clientWidth, h = cv.clientHeight;
+      if (!w || !h) return null;
+      if (cv.width !== (w * dpr | 0) || cv.height !== (h * dpr | 0)) {
+        cv.width = w * dpr; cv.height = h * dpr;
+      }
+      const ctx = cv.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return { ctx, w, h };
+    }
+
+    function plot(cv, series, until, yLabel) {
+      const s = sizeCanvas(cv);
+      if (!s) return;
+      const { ctx, w, h } = s;
+      const pad = { l: 48, r: 12, t: 16, b: 28 };
+      ctx.fillStyle = "#101827";
+      ctx.fillRect(0, 0, w, h);
+      let maxY = 0, maxX = 1;
+      for (const ser of series) {
+        const n = until == null ? ser.ys.length : Math.min(until, ser.ys.length);
+        maxX = Math.max(maxX, Math.max(0, n - 1));
+        for (let i = 0; i < n; i++) maxY = Math.max(maxY, ser.ys[i] || 0);
+      }
+      if (maxY <= 0) maxY = 1;
+      const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
+      ctx.strokeStyle = "#1f2a3d";
+      ctx.beginPath();
+      ctx.moveTo(pad.l, pad.t); ctx.lineTo(pad.l, pad.t + ih); ctx.lineTo(pad.l + iw, pad.t + ih);
+      ctx.stroke();
+      ctx.fillStyle = "#8b9bb8";
+      ctx.font = "11px ui-sans-serif, system-ui";
+      ctx.fillText(yLabel, 8, 14);
+      ctx.fillText(maxY.toFixed(2), 8, pad.t + 10);
+      ctx.fillText("0", 8, pad.t + ih);
+      for (const ser of series) {
+        const n = until == null ? ser.ys.length : Math.min(until, ser.ys.length);
+        if (n < 2) continue;
+        ctx.strokeStyle = ser.color;
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        for (let i = 0; i < n; i++) {
+          const x = pad.l + (i / Math.max(1, maxX)) * iw;
+          const y = pad.t + ih - (ser.ys[i] / maxY) * ih;
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
+    }
+
+    function plotXY(cv, series, xLabel, yLabel, logx) {
+      const s = sizeCanvas(cv);
+      if (!s) return;
+      const { ctx, w, h } = s;
+      const pad = { l: 52, r: 12, t: 16, b: 32 };
+      ctx.fillStyle = "#101827";
+      ctx.fillRect(0, 0, w, h);
+      let minX = Infinity, maxX = -Infinity, maxY = 0;
+      for (const ser of series) {
+        for (const p of ser.pts) {
+          if (!isFinite(p.x) || !isFinite(p.y)) continue;
+          minX = Math.min(minX, p.x);
+          maxX = Math.max(maxX, p.x);
+          maxY = Math.max(maxY, p.y);
+        }
+      }
+      if (!isFinite(minX) || maxX <= minX) { minX = 1; maxX = 10; }
+      if (maxY <= 0) maxY = 1;
+      const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
+      const tx = (x) => {
+        if (!logx) return pad.l + ((x - minX) / (maxX - minX)) * iw;
+        const a = Math.log(Math.max(minX, 1)), b = Math.log(maxX);
+        return pad.l + ((Math.log(Math.max(x, 1)) - a) / Math.max(1e-9, b - a)) * iw;
+      };
+      const ty = (y) => pad.t + ih - (y / maxY) * ih;
+      ctx.strokeStyle = "#1f2a3d";
+      ctx.beginPath();
+      ctx.moveTo(pad.l, pad.t); ctx.lineTo(pad.l, pad.t + ih); ctx.lineTo(pad.l + iw, pad.t + ih);
+      ctx.stroke();
+      ctx.fillStyle = "#8b9bb8";
+      ctx.font = "11px ui-sans-serif, system-ui";
+      ctx.fillText(yLabel, 8, 14);
+      ctx.fillText(xLabel, pad.l + iw - 40, h - 8);
+      for (const ser of series) {
+        const pts = ser.pts.filter((p) => isFinite(p.x) && isFinite(p.y)).sort((a, b) => a.x - b.x);
+        if (pts.length < 1) continue;
+        ctx.strokeStyle = ser.color;
+        ctx.globalAlpha = ser.dash ? 0.9 : 1;
+        ctx.setLineDash(ser.dash ? [5, 4] : []);
+        ctx.lineWidth = 1.7;
+        ctx.beginPath();
+        pts.forEach((p, i) => {
+          const x = tx(p.x), y = ty(p.y);
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = ser.color;
+        pts.forEach((p) => {
+          ctx.beginPath();
+          ctx.arc(tx(p.x), ty(p.y), 2.4, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
+    }
+
+    function plotBars(cv, bars, title) {
+      const s = sizeCanvas(cv);
+      if (!s) return;
+      const { ctx, w, h } = s;
+      const pad = { l: 48, r: 12, t: 20, b: 36 };
+      ctx.fillStyle = "#101827";
+      ctx.fillRect(0, 0, w, h);
+      const maxY = Math.max(1, ...bars.map((b) => b.y));
+      const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
+      const bw = iw / Math.max(1, bars.length);
+      ctx.fillStyle = "#8b9bb8";
+      ctx.font = "11px ui-sans-serif, system-ui";
+      ctx.fillText("× vs " + (title || "ref") + "  (FRAME)", 8, 14);
+      bars.forEach((b, i) => {
+        const bh = (b.y / maxY) * ih;
+        const x = pad.l + i * bw + bw * 0.2;
+        const y = pad.t + ih - bh;
+        ctx.fillStyle = b.color;
+        ctx.fillRect(x, y, bw * 0.6, bh);
+        ctx.fillStyle = "#e8eefc";
+        ctx.fillText(b.y.toFixed(2) + "×", x, y - 4);
+        ctx.fillStyle = "#8b9bb8";
+        ctx.fillText(b.label.replace("_", "\n"), x, pad.t + ih + 14);
+      });
+    }
+
+    function drawTime(until) {
+      plot(document.getElementById("cTime"),
+        tracks.map((t) => ({ color: color(t.name), ys: t.step_ms })),
+        until, "step_ms");
+    }
+    function drawPhys(until) {
+      plot(document.getElementById("cPhys"),
+        tracks.map((t) => ({ color: color(t.name), ys: t.speed_mean })),
+        until, "|v| mean");
+    }
+    function drawScale() {
+      const block = +selB.value || defaultBlock;
+      const frame = {}, kernel = {};
+      for (const row of sweeps) {
+        if (row.mode.startsWith("gpu_") && row.block !== block) continue;
+        const bucket = row.kind === "kernel" ? kernel : frame;
+        (bucket[row.mode] || (bucket[row.mode] = [])).push({ x: row.n, y: row.avg_step_ms });
+      }
+      const series = [];
+      Object.keys(frame).forEach((m) => series.push({ color: color(m), pts: frame[m] }));
+      Object.keys(kernel).forEach((m) => series.push({ color: color(m), pts: kernel[m], dash: true }));
+      if (!series.length) {
+        const s = sizeCanvas(document.getElementById("cScale"));
+        if (s) {
+          s.ctx.fillStyle = "#101827";
+          s.ctx.fillRect(0, 0, s.w, s.h);
+          s.ctx.fillStyle = "#8b9bb8";
+          s.ctx.fillText("No sweep in this packet. Run make dashboard.", 24, 40);
+        }
+        return;
+      }
+      plotXY(document.getElementById("cScale"), series, "N", "ms/step", true);
+    }
+    function sweepFrame(n, block) {
+      return sweeps.filter((r) =>
+        r.n === n && r.kind === "frame" && (r.mode.startsWith("cpu_") || r.block === block)
+      ).map((r) => ({ name: r.mode, avg_step_ms: r.avg_step_ms, fps: r.fps }));
+    }
+    function drawQual() {
+      const block = +selB.value || defaultBlock;
+      const n = +selN.value;
+      let rows = sweepFrame(n, block);
+      if (!rows.length && tracks.length) {
+        rows = tracks.map((t) => ({ name: t.name, avg_step_ms: t.avg_step_ms, fps: t.fps }));
+      }
+      const base = refMs(rows);
+      const bars = rows.map((r) => ({
+        label: r.name || r.mode,
+        y: base > 0 ? base / r.avg_step_ms : 0,
+        color: color(r.name || r.mode),
+      }));
+      if (!bars.length) {
+        const s = sizeCanvas(document.getElementById("cQual"));
+        if (s) {
+          s.ctx.fillStyle = "#101827";
+          s.ctx.fillRect(0, 0, s.w, s.h);
+          s.ctx.fillStyle = "#8b9bb8";
+          s.ctx.fillText("No FRAME rows for this N.", 24, 40);
+        }
+        return;
+      }
+      plotBars(document.getElementById("cQual"), bars, refLabel(rows));
+    }
+
+    function tick() {
+      const cap = activeSpan();
+      if (cap > 0 && !paused && rawWallMs() >= cap) {
+        hold = cap;
+        paused = true;
+        document.getElementById("play").textContent = "Play";
+      }
+      const ms = wallMs();
+      const view = panel === "block" ? tracksBlock : tracks;
+      const viewPanes = panel === "block" ? panesBlock : panes;
+      const frames = view.map((t) => frameAt(t.cum, ms));
+      const until = view.length ? Math.max(0, ...frames) + 1 : 0;
+      const n = +selN.value, block = +selB.value || defaultBlock;
+      let cmp, focus, ref, rlab;
+      if (panel === "block" && tracksBlock.length) {
+        cmp = tracksBlock;
+        focus = tracksBlock.find((t) => t.block === 256) || tracksBlock[0];
+        const base = focus;
+        rlab = "block " + (base.block || 256);
+        ref = base.avg_step_ms;
+        const best = tracksBlock.reduce((a, t) => t.avg_step_ms < a.avg_step_ms ? t : a);
+        document.getElementById("headline").innerHTML =
+          `<b>${best.avg_step_ms.toFixed(2)}</b> ms/step · block ${best.block} · <b>${(ref / best.avg_step_ms).toFixed(2)}×</b> vs ${rlab}`;
+      } else {
+        cmp = tracks.length ? tracks : sweepFrame(n, block);
+        focus = focusTrack(cmp);
+        ref = refMs(cmp);
+        rlab = refLabel(cmp);
+        if (focus) {
+          const sp = ref > 0 ? (ref / focus.avg_step_ms) : 0;
+          document.getElementById("headline").innerHTML =
+            `<b>${focus.avg_step_ms.toFixed(2)}</b> ms/step · <b>${sp.toFixed(2)}×</b> vs ${rlab} · <b>${focus.fps.toFixed(0)}</b> fps`;
+        } else {
+          document.getElementById("headline").textContent = "no data";
+        }
+      }
+      if (panel === "scene" || panel === "block") {
+        const r0 = panel === "block"
+          ? (tracksBlock.find((t) => t.block === 256) || tracksBlock[0])
+          : refOf(tracks);
+        const rMs = r0 && r0.avg_step_ms > 0 ? r0.avg_step_ms : 0;
+        for (let i = 0; i < viewPanes.length; i++) {
+          const p = viewPanes[i], t = p.t, f = frames[i];
+          const last = t.n_steps;
+          const sp = rMs > 0 ? (rMs / t.avg_step_ms) : 0;
+          p.title.textContent = panel === "block" ? ("block " + t.block) : t.name;
+          p.meta.textContent = `N=${t.n_agents}`;
+          p.metrics.innerHTML =
+            `<div><span>ms/step</span><strong>${t.avg_step_ms.toFixed(2)}</strong></div>` +
+            `<div><span>×</span><strong>${sp.toFixed(2)}</strong></div>` +
+            `<div><span>fps</span><strong>${t.fps.toFixed(0)}</strong></div>`;
+          p.bar.style.width = (last ? (100 * f / last) : 0) + "%";
+          drawWorld(p, f);
+        }
+      } else if (panel === "time") drawTime(until);
+      else if (panel === "physics") drawPhys(until);
+      else if (panel === "scaling") drawScale();
+      else if (panel === "quality") drawQual();
+      requestAnimationFrame(tick);
+    }
+    (async () => {
+      try {
+        await loadClip(clip);
+      } catch (err) {
+        grid.innerHTML = `<p class="empty">${err}</p>`;
+        return;
+      }
+      restart();
+      syncCtl();
+      tick();
+    })();
+  </script>
+</body>
+
+</html>

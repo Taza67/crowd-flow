@@ -124,7 +124,7 @@ python3 scripts/test.py repro cpu_naive
 python3 scripts/test.py similar cpu_naive cpu_opt
 ```
 
-Replay existing dumps in the browser (Canvas). Independent clocks: each pane advances when that backend’s recorded `step_ms` elapses. Writes `results/replay.html`. Default `--fit 8` maps the slowest dump to 8 seconds. `--fit 0` plays at recorded 1:1.
+Replay existing dumps in the browser. Independent clocks: each pane advances when that backend’s recorded `step_ms` elapses. Writes `results/dashboard.html`. Default `--fit 8` maps the slowest dump to 8 seconds. `--fit 0` plays at recorded 1:1.
 
 ```sh
 ./build/crowd-sim-cpu dump 500 5000 cpu_naive > cpu_naive.csv
@@ -134,7 +134,7 @@ Replay existing dumps in the browser (Canvas). Independent clocks: each pane adv
 python3 scripts/replay.py cpu_naive.csv cpu_opt.csv gpu_naive.csv gpu_opt.csv
 ```
 
-Record then replay (CPU then GPU). GPU suites print `WARN` and skip if `nvcc` is missing. Default `--fit 8` maps the slowest dump to 8 seconds. `--fit 0` plays at recorded 1:1.
+Record then replay (CPU then GPU). Writes `results/dashboard.html`. GPU suites print `WARN` and skip if `nvcc` is missing. Default `--fit 8` maps the slowest dump to 8 seconds. `--fit 0` plays at recorded 1:1.
 
 ```sh
 make replay
@@ -147,6 +147,25 @@ make replay-cpu
 make replay-gpu
 ```
 
+Collect the dashboard (CPU then GPU) into `results/` (HTML index + gzip clips). No browser. Copy the whole `results/` tree to a machine with a display, then serve it — `file://` cannot load the clips. CPU vs GPU while N ≤ 1000; then GPU naive vs opt until N = 20000; then gpu_opt only. Sweep: 200 steps, N 100–20000; gpu_opt at CUDA blocks 32–1024, other modes at 256. Clips: 10000 steps at N 100/500/1000/2000/5000/10000/20000, stored as `clips/*.rec.gz`. Extra: gpu_opt occupancy at N 500/2000/10000 for blocks 32–1024.
+
+```sh
+make dashboard
+```
+
+CPU suite or GPU suite only:
+
+```sh
+make dashboard-cpu
+make dashboard-gpu
+```
+
+After copying `results/`:
+
+```sh
+make dashboard-serve
+```
+
 Time one backend (CSV on stdout). GPU modes emit `KERNEL` then `FRAME`.
 
 ```sh
@@ -154,7 +173,7 @@ Time one backend (CSV on stdout). GPU modes emit `KERNEL` then `FRAME`.
 ./build/crowd-sim-gpu bench 100 100 gpu_opt
 ```
 
-Quick table (CPU then GPU, N=100, steps=100). GPU suites print `WARN` and skip if `nvcc` is missing. Naive modes skip when N > 20000. Sweeps write `results/bench_results.csv`.
+Quick table (CPU then GPU, N=100, steps=100). GPU suites print `WARN` and skip if `nvcc` is missing. Naive modes skip when N > 20000. CPU modes skip when N > 1000. Sweeps write `results/bench_results.csv`.
 
 ```sh
 make bench

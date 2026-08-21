@@ -158,6 +158,8 @@ int dump_run(int n_agents, int n_steps, const char *mode) {
     step(s);
     dump_state(s, t, get_time_ms() - t0);
   }
+  cf_log(stderr, CF_ST_OK, "dump", "mode=%s  N=%d  steps=%d", mode, n_agents,
+         n_steps);
   return capture_end(s, gpu_free);
 }
 
@@ -169,6 +171,11 @@ int rec_run(int n_agents, int n_steps, const char *mode) {
       dump_start(n_agents, n_steps, mode, "rec", &step, &gpu_init, &gpu_free);
   if (!s)
     return EXIT_FAILURE;
+  static char rec_buf[1 << 20];
+  if (setvbuf(stdout, rec_buf, _IOFBF, sizeof(rec_buf)) != 0) {
+    cf_log(stderr, CF_ST_FAIL, "rec", "setvbuf");
+    exit(EXIT_FAILURE);
+  }
   rec_header(s, n_steps + 1);
   rec_frame(s, 0.0);
   for (int t = 1; t <= n_steps; t++) {
@@ -176,5 +183,7 @@ int rec_run(int n_agents, int n_steps, const char *mode) {
     step(s);
     rec_frame(s, get_time_ms() - t0);
   }
+  cf_log(stderr, CF_ST_OK, "rec", "mode=%s  N=%d  steps=%d", mode, n_agents,
+         n_steps);
   return capture_end(s, gpu_free);
 }

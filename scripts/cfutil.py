@@ -15,6 +15,24 @@ GPU_MODES = ("gpu_naive", "gpu_opt")
 MODES = CPU_MODES + GPU_MODES
 _gpu_ok: bool | None = None
 
+SWEEP_N = (100, 500, 1000, 2000, 5000, 10000, 20000)
+SWEEP_STEPS = 200
+NAIVE_CAP = 20000
+CPU_CAP = 1000
+CLIP_NAIVE_CAP = 2000
+DEFAULT_BLOCK = 256  # matches BLOCK_SIZE in constants.h
+BLOCKS = (32, 64, 128, 256, 512, 1024)
+BENCH_FIELDS = (
+    "version",
+    "n_agents",
+    "n_steps",
+    "total_ms",
+    "avg_step_ms",
+    "min_step_ms",
+    "max_step_ms",
+    "fps",
+)
+
 DUMP_COLS = ("t", "id", "x", "y", "vx", "vy", "goal", "step_ms")
 PHYS_COLS = ("t", "id", "x", "y", "vx", "vy", "goal")
 STATE_COLS = ("x", "y", "vx", "vy")
@@ -54,6 +72,32 @@ def have_gpu() -> bool:
     return _gpu_ok
 
 
+def skip_naive(n: int, mode: str) -> bool:
+    return "naive" in mode and n > NAIVE_CAP
+
+
+def skip_cpu(n: int, mode: str) -> bool:
+    return mode.startswith("cpu_") and n > CPU_CAP
+
+
+def skip_mode(n: int, mode: str) -> bool:
+    return skip_naive(n, mode) or skip_cpu(n, mode)
+
+
+def skip_clip(n: int, mode: str) -> bool:
+    if skip_mode(n, mode):
+        return True
+    return "naive" in mode and n > CLIP_NAIVE_CAP
+
+
+def skip_sweep(n: int, mode: str, block: int) -> bool:
+    if skip_mode(n, mode):
+        return True
+    if block == DEFAULT_BLOCK:
+        return False
+    return mode != "gpu_opt"
+
+
 def modes_for(cmd: str | None) -> tuple[str, ...]:
     if cmd == "cpu":
         return CPU_MODES
@@ -87,15 +131,19 @@ def run_crowd(
     capture_output: bool = False,
     stdout=None,
     text: bool = True,
+    block: int | None = None,
 ) -> subprocess.CompletedProcess:
     path = binary(mode)
     if not ensure_bin(path):
         die("gpu" if mode.startswith("gpu_") else "cpu", "binary missing")
+    env = os.environ.copy()
+    if block is not None:
+        env["CROWD_FLOW_BLOCK"] = str(block)
     cmd = [str(path), verb, str(n), str(steps), mode]
     if capture_output:
-        return subprocess.run(cmd, capture_output=True, text=True)
+        return subprocess.run(cmd, capture_output=True, text=True, env=env)
     return subprocess.run(
-        cmd, stdout=stdout, stderr=subprocess.PIPE, text=text
+        cmd, stdout=stdout, stderr=subprocess.PIPE, text=text, env=env
     )
 
 

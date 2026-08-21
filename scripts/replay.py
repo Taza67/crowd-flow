@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import array
 import csv
-import json
+import gzip
 import math
 import struct
 import tempfile
@@ -16,12 +16,10 @@ from collections import defaultdict
 from pathlib import Path
 
 from cfutil import (
-    AGENT_RADIUS,
+    DEFAULT_BLOCK,
     DUMP_COLS,
     REC_MAGIC,
     ROOT,
-    WORLD_HALF,
-    WORLD_SIZE,
     XY_SCALE,
     check_proc,
     die,
@@ -33,8 +31,7 @@ from cfutil import (
     run_crowd,
 )
 
-TEMPLATE = Path(__file__).with_name("replay.html")
-OUT = ROOT / "results" / "replay.html"
+from dashpack import packet, write_dashboard
 
 
 class Track:
@@ -64,6 +61,8 @@ class Track:
         self.fps = (1000.0 / self.avg_step_ms) if self.avg_step_ms > 0 else 0.0
 
     def payload(self) -> dict:
+        n_frames = len(self.step_ms)
+        xy = _delta_i16(self.xy, self.n_agents, n_frames)
         return {
             "name": self.name,
             "n_agents": self.n_agents,
@@ -74,11 +73,25 @@ class Track:
             "max_step_ms": round(self.max_step_ms, 4),
             "fps": round(self.fps, 2),
             "step_ms": self.step_ms,
-            "xy": b64encode(self.xy).decode("ascii"),
-            "goal": b64encode(self.goal).decode("ascii"),
+            "xy_gz": True,
+            "xy_delta": True,
+            "xy": b64encode(gzip.compress(xy, 6)).decode("ascii"),
+            "goal": b64encode(gzip.compress(self.goal, 6)).decode("ascii"),
             "speed_mean": self.speed_mean,
             "speed_max": self.speed_max,
         }
+
+
+def _delta_i16(buf: bytes, n_agents: int, n_frames: int) -> bytes:
+    arr = array.array("h")
+    arr.frombytes(buf)
+    frame = n_agents * 2
+    for f in range(n_frames - 1, 0, -1):
+        base = f * frame
+        prev = (f - 1) * frame
+        for i in range(frame):
+            arr[base + i] = arr[base + i] - arr[prev + i]
+    return arr.tobytes()
 
 
 def rec_q(v: float) -> int:
@@ -180,32 +193,62 @@ def load_any(path: Path) -> tuple[Track, list[dict[str, float]]]:
     return load_dump(path)
 
 
-def rec_to(path: Path, n: int, steps: int, mode: str) -> None:
+def rec_xy_delta(raw: bytes) -> bytes:
+    if len(raw) < 16 or raw[:4] != REC_MAGIC:
+        die("replay", "not a rec file")
+    n_obs, n_agents, n_frames = struct.unpack_from("<III", raw, 4)
+    pos = 16 + n_obs * 12
+    out = bytearray(raw)
+    frame_xy = n_agents * 4
+    xy = bytearray()
+    spans: list[int] = []
+    for _ in range(n_frames):
+        pos += 12
+        spans.append(pos)
+        xy += raw[pos : pos + frame_xy]
+        pos += frame_xy + n_agents
+    if pos != len(raw):
+        die("replay", "rec size mismatch")
+    delta = _delta_i16(bytes(xy), n_agents, n_frames)
+    i = 0
+    for p in spans:
+        out[p : p + frame_xy] = delta[i : i + frame_xy]
+        i += frame_xy
+    return bytes(out)
+
+
+def rec_to(path: Path, n: int, steps: int, mode: str, block: int | None = None) -> None:
     with path.open("wb") as out:
-        proc = run_crowd(mode, "rec", n, steps, stdout=out, text=False)
-    check_proc(proc, "rec", f"mode={mode}  N={n}  steps={steps}")
+        proc = run_crowd(
+            mode, "rec", n, steps, stdout=out, text=False, block=block
+        )
+    check_proc(proc, "rec", f"mode={mode}  N={n}  steps={steps}  block={block}")
+
+
+def rec_to_pack(path: Path, n: int, steps: int, mode: str, block: int | None = None) -> None:
+    tmp = tempfile.NamedTemporaryFile(suffix=".rec", delete=False)
+    tmp.close()
+    tmp_path = Path(tmp.name)
+    try:
+        rec_to(tmp_path, n, steps, mode, block)
+        path.write_bytes(gzip.compress(rec_xy_delta(tmp_path.read_bytes()), 6))
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 def write_html(
     tracks: list[Track], fit: float, obstacles: list[dict[str, float]]
 ) -> Path:
-    if not TEMPLATE.is_file():
-        die("replay", f"missing {TEMPLATE}")
-    data = json.dumps(
-        {
-            "fit": fit,
-            "world_size": WORLD_SIZE,
-            "world_half": WORLD_HALF,
-            "agent_radius": AGENT_RADIUS,
-            "obstacles": obstacles,
-            "tracks": [t.payload() for t in tracks],
-        },
-        separators=(",", ":"),
-    ).replace("<", "\\u003c")
-    html = TEMPLATE.read_text(encoding="utf-8").replace("__DATA__", data)
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(html, encoding="utf-8")
-    return OUT
+    n = tracks[0].n_agents if tracks else 0
+    steps = tracks[0].n_steps if tracks else 0
+    clip = {
+        "n": n,
+        "steps": steps,
+        "block": DEFAULT_BLOCK,
+        "obstacles": obstacles,
+        "tracks": [t.payload() for t in tracks],
+    }
+    return write_dashboard(packet([clip], [], fit=fit, blocks=(DEFAULT_BLOCK,)))
 
 
 def parse_args() -> argparse.Namespace:

@@ -45,17 +45,19 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/).
 |------|------|
 | `src/main.c` | Entry point, dispatch of bench, dump and rec |
 | `src/simulation.c` | World spawn and finish of each step |
-| `src/cpu_naive.c` | CPU all-pairs neighbour scan |
-| `src/cpu_opt.c` | CPU spatial grid |
-| `src/gpu_naive.cu` | GPU all-pairs neighbour scan |
-| `src/gpu_opt.cu` | GPU spatial grid |
+| `src/cpu_naive.c` | CPU O(N²) neighbour scan |
+| `src/cpu_opt.c` | CPU SoA + CSR spatial grid |
+| `src/gpu_naive.cu` | GPU O(N²) neighbour scan |
+| `src/gpu_opt.cu` | GPU SoA compacted by cell |
 | `src/constraints.c` | Hard contacts after steering |
 | `src/dump.c` | CSV dump and binary rec |
 | `src/benchmark.c` | Timed run of one backend |
 | `inc/steering.h` | Flock, goal, obstacles, Euler |
 | `scripts/test.py` | Repro and similar dump tests |
 | `scripts/bench.py` | Bench sweeps |
-| `scripts/replay.py` | Browser replay of all four modes |
+| `scripts/replay.py` | Record or load dumps, write dashboard HTML |
+| `scripts/dashboard.py` | Collect clips + sweeps; `--serve` for a local viewer |
+| `scripts/dashpack.py` | Dashboard packet and HTML template fill |
 
 ## Code of conduct
 
