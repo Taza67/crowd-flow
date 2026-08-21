@@ -352,6 +352,7 @@
     }
     function parseRec(buf, meta) {
       const v = new DataView(buf);
+      const u8 = new Uint8Array(buf);
       if (v.byteLength < 16
         || v.getUint8(0) !== 0x43 || v.getUint8(1) !== 0x46
         || v.getUint8(2) !== 0x31 || v.getUint8(3) !== 0)
@@ -369,22 +370,27 @@
         });
         off += 12;
       }
+      const nxy = nAgents * 2;
+      const xyBytes = nxy * 2;
       const step_ms = [], speed_mean = [], speed_max = [];
-      const xy = new Int16Array(nFrames * nAgents * 2);
+      const xy = new Int16Array(nFrames * nxy);
+      const xyU8 = new Uint8Array(xy.buffer);
       const goal = new Uint8Array(nFrames * nAgents);
-      let xi = 0, gi = 0;
+      let boff = 0, gi = 0;
       for (let f = 0; f < nFrames; f++) {
         step_ms.push(v.getFloat32(off, true)); off += 4;
         speed_mean.push(Math.round(v.getFloat32(off, true) * 1e4) / 1e4); off += 4;
         speed_max.push(Math.round(v.getFloat32(off, true) * 1e4) / 1e4); off += 4;
-        for (let i = 0; i < nAgents; i++) {
-          xy[xi++] = v.getInt16(off, true); off += 2;
-          xy[xi++] = v.getInt16(off, true); off += 2;
-        }
-        for (let i = 0; i < nAgents; i++) goal[gi++] = v.getUint8(off++);
+        xyU8.set(u8.subarray(off, off + xyBytes), boff);
+        boff += xyBytes;
+        off += xyBytes;
+        goal.set(u8.subarray(off, off + nAgents), gi);
+        gi += nAgents;
+        off += nAgents;
       }
       if (off !== v.byteLength)
         throw new Error((meta.file || "clip") + ": rec size mismatch");
+      if (meta && meta.xy_delta) undeltaI16(xy, nAgents, nFrames);
       const timed = step_ms.slice(1);
       const avg = timed.length ? timed.reduce((a, b) => a + b, 0) / timed.length : 0;
       const total = timed.reduce((a, b) => a + b, 0);
@@ -403,6 +409,13 @@
         step_ms, speed_mean, speed_max, xy, goal, cum, obstacles,
       };
     }
+    function undeltaI16(xy, nAgents, nFrames) {
+      const frame = nAgents * 2;
+      for (let f = 1; f < nFrames; f++) {
+        const b = f * frame, p = (f - 1) * frame;
+        for (let i = 0; i < frame; i++) xy[b + i] = (xy[b + i] + xy[p + i]) << 16 >> 16;
+      }
+    }
     async function gunzip(u8) {
       if (typeof DecompressionStream === "undefined")
         throw new Error("This browser cannot gunzip clip data.");
@@ -413,27 +426,61 @@
       const copy = (u8.byteOffset % 2 === 0) ? u8 : u8.slice();
       return new Int16Array(copy.buffer, copy.byteOffset, copy.byteLength / 2);
     }
-    function undeltaI16(xy, nAgents, nFrames) {
-      const frame = nAgents * 2;
-      for (let f = 1; f < nFrames; f++) {
-        const b = f * frame, p = (f - 1) * frame;
-        for (let i = 0; i < frame; i++) xy[b + i] = (xy[b + i] + xy[p + i]) << 16 >> 16;
+    const decodeUrl = URL.createObjectURL(new Blob([
+      undeltaI16.toString(),
+      gunzip.toString(),
+      parseRec.toString(),
+      `async function recBuffer(file) {
+        const res = await fetch(file);
+        if (!res.ok) throw new Error("missing " + file);
+        if (file.endsWith(".gz") && res.body && typeof DecompressionStream !== "undefined")
+          return new Response(res.body.pipeThrough(new DecompressionStream("gzip"))).arrayBuffer();
+        const buf = await res.arrayBuffer();
+        const u8 = new Uint8Array(buf);
+        if (u8.length >= 2 && u8[0] === 0x1f && u8[1] === 0x8b) {
+          const g = await gunzip(u8);
+          return g.buffer.slice(g.byteOffset, g.byteOffset + g.byteLength);
+        }
+        return buf;
       }
+      self.onmessage = async (ev) => {
+        const raw = ev.data;
+        try {
+          const t = parseRec(await recBuffer(raw.file), raw);
+          self.postMessage(t, [t.xy.buffer, t.goal.buffer]);
+        } catch (err) {
+          self.postMessage({ error: String(err && err.message || err) });
+        }
+      };`,
+    ].join("\n"), { type: "text/javascript" }));
+    const trackCache = {};
+    function inflateFile(raw) {
+      return new Promise((resolve, reject) => {
+        const w = new Worker(decodeUrl);
+        w.onmessage = (e) => {
+          w.terminate();
+          if (!e.data || e.data.error)
+            reject(new Error((e.data && e.data.error) || "clip decode failed"));
+          else resolve(e.data);
+        };
+        w.onerror = (e) => {
+          w.terminate();
+          reject(new Error(e.message || "clip decode failed"));
+        };
+        w.postMessage({ file: raw.file, name: raw.name, xy_delta: raw.xy_delta });
+      });
     }
     async function inflate(raw) {
       if (raw.file) {
         if (location.protocol === "file:")
-          throw new Error("Open via make dashboard (local server). file:// cannot load clips.");
-        const res = await fetch(raw.file);
-        if (!res.ok) throw new Error("missing " + raw.file);
-        let buf = await res.arrayBuffer();
-        if ((raw.file || "").endsWith(".gz")) {
-          const u8 = await gunzip(new Uint8Array(buf));
-          buf = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
-        }
-        const t = parseRec(buf, raw);
-        if (raw.xy_delta) undeltaI16(t.xy, t.n_agents, t.step_ms.length);
-        return t;
+          throw new Error("Open via make dashboard-serve. file:// cannot load clips.");
+        if (trackCache[raw.file]) return trackCache[raw.file];
+        const p = inflateFile(raw).catch((err) => {
+          if (trackCache[raw.file] === p) delete trackCache[raw.file];
+          throw err;
+        });
+        trackCache[raw.file] = p;
+        return p;
       }
       const cum = [0];
       let acc = 0;
@@ -550,41 +597,78 @@
       return (fit > 0 && ms > 0) ? (fit * 1000) / ms : 1;
     }
 
-    async function loadClip(c) {
-      clip = c;
-      tracks = c ? await Promise.all(c.tracks.map(inflate)) : [];
-      obstacles = (c && c.obstacles)
+    let clipGen = 0, blockGen = 0;
+
+    function applyClipTracks(list, empty) {
+      tracks = list;
+      obstacles = (clip && clip.obstacles)
         || (tracks[0] && tracks[0].obstacles)
         || obstacles;
       span = Math.max(0, ...tracks.map((t) => t.total_ms));
       scale = fitScale(span);
-      panes = fillGrid(grid, tracks,
-        `No clip at this N. Scaling and Quality use the ${sweepSteps}-step sweep.`);
+      panes = fillGrid(grid, tracks, empty);
+    }
+
+    function applyBlockTracks(list, empty) {
+      tracksBlock = list;
+      spanBlock = Math.max(0, ...tracksBlock.map((t) => t.total_ms));
+      scaleBlock = fitScale(spanBlock);
+      panesBlock = fillGrid(gridBlock, tracksBlock, empty);
+    }
+
+    async function loadClip(c) {
+      const gen = ++clipGen;
+      clip = c;
+      const list = (c && c.tracks) || [];
+      const empty = `No clip at this N. Scaling and Quality use the ${sweepSteps}-step sweep.`;
+      if (!list.length) {
+        applyClipTracks([], empty);
+        return;
+      }
+      const head = list.find((t) => t.name === "gpu_opt") || list[0];
+      fillGrid(grid, [], `Loading 1/${list.length}…`);
+      const first = await inflate(head);
+      if (gen !== clipGen) return;
+      applyClipTracks([first], empty);
+      restart();
+      const rest = list.filter((t) => t !== head);
+      if (!rest.length) return;
+      const byName = { [first.name]: first };
+      (await Promise.all(rest.map(inflate))).forEach((t) => { byName[t.name] = t; });
+      if (gen !== clipGen) return;
+      applyClipTracks(list.map((raw) => byName[raw.name]), empty);
     }
 
     const blockCache = {};
     async function loadBlock() {
       const n = +selN.value;
+      const empty = `No gpu_opt block clips (N=${n}).`;
       if (blockCache[n]) {
-        tracksBlock = blockCache[n];
-      } else {
-        const rows = clips.filter((c) => c.n === n);
-        tracksBlock = [];
-        for (const c of rows) {
-          for (const t of c.tracks || []) {
-            if (t.name !== "gpu_opt") continue;
-            const x = await inflate(t);
-            x.block = c.block;
-            tracksBlock.push(x);
-          }
-        }
-        tracksBlock.sort((a, b) => a.block - b.block);
-        blockCache[n] = tracksBlock;
+        applyBlockTracks(blockCache[n], empty);
+        return;
       }
-      spanBlock = Math.max(0, ...tracksBlock.map((t) => t.total_ms));
-      scaleBlock = fitScale(spanBlock);
-      panesBlock = fillGrid(gridBlock, tracksBlock,
-        `No gpu_opt block clips (N=${n}).`);
+      const gen = ++blockGen;
+      const rows = clips.filter((c) => c.n === n);
+      const jobs = [];
+      for (const c of rows) {
+        for (const t of c.tracks || []) {
+          if (t.name !== "gpu_opt") continue;
+          jobs.push({ t, block: c.block });
+        }
+      }
+      const loaded = [];
+      for (let i = 0; i < jobs.length; i++) {
+        fillGrid(gridBlock, loaded, `Loading ${i + 1}/${jobs.length}…`);
+        const x = await inflate(jobs[i].t);
+        if (gen !== blockGen) return;
+        x.block = jobs[i].block;
+        loaded.push(x);
+        applyBlockTracks(loaded, empty);
+        if (i === 0) restart();
+      }
+      loaded.sort((a, b) => a.block - b.block);
+      blockCache[n] = loaded;
+      applyBlockTracks(loaded, empty);
     }
 
     let paused = false, rate = 1, origin = performance.now(), hold = 0;
@@ -603,7 +687,7 @@
       });
       if (on.n) {
         fillSelect(selN, nChoices(), panel === "block" ? preferBlockN : (clip && clip.n));
-        document.querySelector("[data-ctl=n]").hidden = nChoices().length <= 1;
+        document.querySelector("[data-ctl=n]").hidden = nChoices().length === 0;
       }
       if (on.block) {
         fillSelect(selB, bChoices(), defaultBlock);
@@ -661,7 +745,7 @@
       syncCtl();
       if (panel === "block") {
         try { await loadBlock(); }
-        catch (err) { gridBlock.innerHTML = `<p class="empty">${err}</p>`; }
+        catch (err) { showLoadError(gridBlock, err); }
       }
       restart();
     });
@@ -701,14 +785,15 @@
       if (e.key === "[") setRate(rate * 0.5);
       if (e.key === "]") setRate(rate * 2);
     });
+    function showLoadError(el, err) {
+      el.innerHTML = `<p class="empty">${err}</p>`;
+    }
     selN.onchange = () => {
-      const on = CTL[panel] || {};
-      if (on.block) {
-        fillSelect(selB, bChoices(), defaultBlock);
-        document.querySelector("[data-ctl=block]").hidden = bChoices().length <= 1;
-      }
-      if (panel === "block") loadBlock().then(restart);
-      else loadClip(findClip(+selN.value)).then(restart);
+      syncCtl();
+      if (panel === "block")
+        loadBlock().then(restart).catch((err) => showLoadError(gridBlock, err));
+      else
+        loadClip(findClip(+selN.value)).then(restart).catch((err) => showLoadError(grid, err));
     };
     selB.onchange = () => restart();
 
@@ -1007,15 +1092,14 @@
       requestAnimationFrame(tick);
     }
     (async () => {
-      try {
-        await loadClip(clip);
-      } catch (err) {
-        grid.innerHTML = `<p class="empty">${err}</p>`;
-        return;
-      }
       restart();
       syncCtl();
       tick();
+      try {
+        await loadClip(clip);
+      } catch (err) {
+        showLoadError(grid, err);
+      }
     })();
   </script>
 </body>
