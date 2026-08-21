@@ -3,7 +3,21 @@
 #include "gpu_common.cuh"
 #include "gpu_naive.h"
 #include "steering.h"
-#include <cuda_runtime.h>
+
+typedef struct {
+  float px, py;
+  float vx, vy;
+  int goal_idx;
+} DevAgent;
+
+typedef struct {
+  DevAgent *d[2];
+  Obstacle *d_obs;
+  Goal *d_goals;
+  DevAgent *h_buf;
+  int buf;
+  int n_agents, n_obstacles, n_goals;
+} GpuNaiveState;
 
 static GpuNaiveState gns;
 
@@ -12,8 +26,8 @@ static void gpu_naive_upload_from_host(const Simulation *s);
 
 __global__ void boids_naive_kernel(const DevAgent *__restrict__ in,
                                    DevAgent *__restrict__ out,
-                                   const DevObstacle *__restrict__ obs,
-                                   const DevGoal *__restrict__ goals, int N,
+                                   const Obstacle *__restrict__ obs,
+                                   const Goal *__restrict__ goals, int N,
                                    int n_obs, int n_goals) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= N)
@@ -59,25 +73,24 @@ void gpu_naive_init(const Simulation *s) {
   CUDA_CHECK(cudaMalloc(&gns.d[0], agents_sz));
   CUDA_CHECK(cudaMalloc(&gns.d[1], agents_sz));
   CUDA_CHECK(
-      cudaMalloc(&gns.d_obs, (size_t)gns.n_obstacles * sizeof(DevObstacle)));
-  CUDA_CHECK(cudaMalloc(&gns.d_goals, (size_t)gns.n_goals * sizeof(DevGoal)));
+      cudaMalloc(&gns.d_obs, (size_t)gns.n_obstacles * sizeof(Obstacle)));
+  CUDA_CHECK(cudaMalloc(&gns.d_goals, (size_t)gns.n_goals * sizeof(Goal)));
   CUDA_CHECK(cudaMallocHost(&gns.h_buf, agents_sz));
 
-  DevObstacle *h_obs =
-      (DevObstacle *)malloc((size_t)gns.n_obstacles * sizeof(DevObstacle));
-  DevGoal *h_goals = (DevGoal *)malloc((size_t)gns.n_goals * sizeof(DevGoal));
+  Obstacle *h_obs =
+      (Obstacle *)malloc((size_t)gns.n_obstacles * sizeof(Obstacle));
+  Goal *h_goals = (Goal *)malloc((size_t)gns.n_goals * sizeof(Goal));
   if (!h_obs || !h_goals)
     cf_die("gpu_naive_init: out of memory");
   for (int o = 0; o < gns.n_obstacles; o++)
-    h_obs[o] = (DevObstacle){s->obstacles[o].x, s->obstacles[o].y,
-                             s->obstacles[o].radius};
+    h_obs[o] = s->obstacles[o];
   for (int g = 0; g < gns.n_goals; g++)
-    h_goals[g] = (DevGoal){s->goals[g].x, s->goals[g].y};
+    h_goals[g] = s->goals[g];
   CUDA_CHECK(cudaMemcpy(gns.d_obs, h_obs,
-                        (size_t)gns.n_obstacles * sizeof(DevObstacle),
+                        (size_t)gns.n_obstacles * sizeof(Obstacle),
                         cudaMemcpyHostToDevice));
   CUDA_CHECK(cudaMemcpy(gns.d_goals, h_goals,
-                        (size_t)gns.n_goals * sizeof(DevGoal),
+                        (size_t)gns.n_goals * sizeof(Goal),
                         cudaMemcpyHostToDevice));
   free(h_obs);
   free(h_goals);
@@ -106,10 +119,11 @@ void gpu_naive_launch_kernel_only(void) {
   int N = gns.n_agents;
   int r = gns.buf;
   int w = 1 - r;
-  int nblocks = (N + BLOCK_SIZE - 1) / BLOCK_SIZE;
-  boids_naive_kernel<<<nblocks, BLOCK_SIZE>>>(gns.d[r], gns.d[w], gns.d_obs,
-                                              gns.d_goals, N, gns.n_obstacles,
-                                              gns.n_goals);
+  int block = cf_cuda_block();
+  int nblocks = (N + block - 1) / block;
+  boids_naive_kernel<<<nblocks, block>>>(gns.d[r], gns.d[w], gns.d_obs,
+                                         gns.d_goals, N, gns.n_obstacles,
+                                         gns.n_goals);
   CUDA_POST_KERNEL_CHECK();
   gns.buf = w;
 }

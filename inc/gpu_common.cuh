@@ -4,10 +4,8 @@
 #define GPU_COMMON_CUH
 
 #include "benchmark.h"
-#include "simulation.h"
 #include "utils.h"
-#include <stdio.h>
-#include <stdlib.h>
+#include <cuda_runtime.h>
 
 #define CUDA_CHECK(err)                                                        \
   do {                                                                         \
@@ -25,6 +23,24 @@ static inline void gpu_require_device(void) {
     cf_log(stderr, CF_ST_FAIL, "cuda", "no CUDA device");
     exit(EXIT_FAILURE);
   }
+}
+
+static inline int cf_cuda_block(void) {
+  const char *e = getenv("CROWD_FLOW_BLOCK");
+  int b = BLOCK_SIZE;
+  if (e && e[0]) {
+    char *end = NULL;
+    long v = strtol(e, &end, 10);
+    if (end == e || *end != '\0' || v < 32 || v > CUDA_MAX_BLOCK_THREADS ||
+        (v & 31) != 0) {
+      cf_log(stderr, CF_ST_FAIL, "cuda",
+             "CROWD_FLOW_BLOCK must be 32..%d and a multiple of 32 (got '%s')",
+             CUDA_MAX_BLOCK_THREADS, e);
+      exit(EXIT_FAILURE);
+    }
+    b = (int)v;
+  }
+  return b;
 }
 
 #define CUDA_POST_KERNEL_CHECK()                                               \

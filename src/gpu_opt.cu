@@ -1,9 +1,23 @@
-/* gpu_opt.cu — SoA + counting-sort grid. Twin of gpu_naive.cu. */
+/* gpu_opt.cu — SoA compacted by cell. Twin of gpu_naive.cu. */
 
 #include "gpu_common.cuh"
 #include "gpu_opt.h"
 #include "steering.h"
-#include <cuda_runtime.h>
+
+typedef struct {
+  float *d_px[2], *d_py[2], *d_vx[2], *d_vy[2];
+  int *d_gi[2];
+  int *d_id[2];
+  int *d_cell_ids;
+  int *d_cell_count, *d_cell_start, *d_cell_fill;
+  Obstacle *d_obs;
+  Goal *d_goals;
+  float *h_px, *h_py, *h_vx, *h_vy;
+  int *h_gi;
+  int *h_id;
+  int buf;
+  int n_agents, n_obstacles, n_goals;
+} GpuOptState;
 
 static GpuOptState gos;
 
@@ -45,28 +59,37 @@ __global__ void exclusive_scan_kernel(const int *__restrict__ in,
     out[tid] = prev;
 }
 
-__global__ void scatter_agents_kernel(const int *__restrict__ cell_ids,
-                                      int *__restrict__ cell_fill,
-                                      const int *__restrict__ cell_start,
-                                      int *__restrict__ sorted_agents, int N) {
+__global__ void scatter_soa_kernel(
+    const int *__restrict__ cell_ids, int *__restrict__ cell_fill,
+    const int *__restrict__ cell_start, int N, const float *__restrict__ px_in,
+    const float *__restrict__ py_in, const float *__restrict__ vx_in,
+    const float *__restrict__ vy_in, const int *__restrict__ gi_in,
+    const int *__restrict__ id_in, float *__restrict__ px_out,
+    float *__restrict__ py_out, float *__restrict__ vx_out,
+    float *__restrict__ vy_out, int *__restrict__ gi_out,
+    int *__restrict__ id_out) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= N)
     return;
   int c = cell_ids[i];
   int pos = atomicAdd(&cell_fill[c], 1) + cell_start[c];
-  sorted_agents[pos] = i;
+  px_out[pos] = px_in[i];
+  py_out[pos] = py_in[i];
+  vx_out[pos] = vx_in[i];
+  vy_out[pos] = vy_in[i];
+  gi_out[pos] = gi_in[i];
+  id_out[pos] = id_in[i];
 }
 
 __global__ void boids_opt_kernel(
     const float *__restrict__ px_in, const float *__restrict__ py_in,
     const float *__restrict__ vx_in, const float *__restrict__ vy_in,
-    const int *__restrict__ gi_in, float *__restrict__ px_out,
-    float *__restrict__ py_out, float *__restrict__ vx_out,
-    float *__restrict__ vy_out, int *__restrict__ gi_out,
+    const int *__restrict__ gi_in, const int *__restrict__ id_in,
+    float *__restrict__ px_out, float *__restrict__ py_out,
+    float *__restrict__ vx_out, float *__restrict__ vy_out,
+    int *__restrict__ gi_out, int *__restrict__ id_out,
     const int *__restrict__ cell_start, const int *__restrict__ cell_count,
-    const int *__restrict__ sorted_agents, const float *__restrict__ obs_x,
-    const float *__restrict__ obs_y, const float *__restrict__ obs_r,
-    const float *__restrict__ gx, const float *__restrict__ gy, int N,
+    const Obstacle *__restrict__ obs, const Goal *__restrict__ goals, int N,
     int n_obs, int n_goals) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= N)
@@ -92,8 +115,7 @@ __global__ void boids_opt_kernel(
       int cell = ny * GRID_DIM + nx;
       int start = cell_start[cell];
       int cnt = cell_count[cell];
-      for (int k = 0; k < cnt; k++) {
-        int j = sorted_agents[start + k];
+      for (int j = start; j < start + cnt; j++) {
         if (j == i)
           continue;
         steering_accum_neighbour(ax, ay, px_in[j], py_in[j], vx_in[j], vy_in[j],
@@ -105,10 +127,8 @@ __global__ void boids_opt_kernel(
 
   Vec2 flock = steering_flock(sep_x, sep_y, n_sep, aln_x, aln_y, coh_x, coh_y,
                               n_nbr, ax, ay, avx, avy);
-  Obstacle obs_loc[MAX_OBSTACLES];
-  for (int o = 0; o < n_obs; o++)
-    obs_loc[o] = (Obstacle){obs_x[o], obs_y[o], obs_r[o]};
-  Vec2 acc = steering_forces(flock, ax, ay, gx[gi], gy[gi], obs_loc, n_obs);
+  Vec2 acc =
+      steering_forces(flock, ax, ay, goals[gi].x, goals[gi].y, obs, n_obs);
 
   float npx, npy, nvx, nvy;
   steering_integrate(ax, ay, avx, avy, acc, &npx, &npy, &nvx, &nvy);
@@ -117,18 +137,18 @@ __global__ void boids_opt_kernel(
   vx_out[i] = nvx;
   vy_out[i] = nvy;
   gi_out[i] = gi;
+  id_out[i] = id_in[i];
 }
 
-static void gpu_opt_rebuild_grid(int N) {
-  int b = gos.buf;
-  int nblocks = (N + BLOCK_SIZE - 1) / BLOCK_SIZE;
+static void gpu_opt_rebuild_grid(int N, int r, int w) {
+  int block = cf_cuda_block();
+  int nblocks = (N + block - 1) / block;
   CUDA_CHECK(cudaMemset(gos.d_cell_count, 0, GRID_CELLS * sizeof(int)));
   CUDA_CHECK(cudaMemset(gos.d_cell_fill, 0, GRID_CELLS * sizeof(int)));
-  assign_cells_kernel<<<nblocks, BLOCK_SIZE>>>(gos.d_px[b], gos.d_py[b],
-                                               gos.d_cell_ids, N);
+  assign_cells_kernel<<<nblocks, block>>>(gos.d_px[r], gos.d_py[r],
+                                          gos.d_cell_ids, N);
   CUDA_POST_KERNEL_CHECK();
-  count_cells_kernel<<<nblocks, BLOCK_SIZE>>>(gos.d_cell_ids, gos.d_cell_count,
-                                              N);
+  count_cells_kernel<<<nblocks, block>>>(gos.d_cell_ids, gos.d_cell_count, N);
   CUDA_POST_KERNEL_CHECK();
 
   int scan_blk = 1;
@@ -137,9 +157,11 @@ static void gpu_opt_rebuild_grid(int N) {
   exclusive_scan_kernel<<<1, scan_blk, scan_blk * sizeof(int)>>>(
       gos.d_cell_count, gos.d_cell_start, GRID_CELLS);
   CUDA_POST_KERNEL_CHECK();
-  scatter_agents_kernel<<<nblocks, BLOCK_SIZE>>>(
-      gos.d_cell_ids, gos.d_cell_fill, gos.d_cell_start, gos.d_sorted_agents,
-      N);
+  scatter_soa_kernel<<<nblocks, block>>>(
+      gos.d_cell_ids, gos.d_cell_fill, gos.d_cell_start, N, gos.d_px[r],
+      gos.d_py[r], gos.d_vx[r], gos.d_vy[r], gos.d_gi[r], gos.d_id[r],
+      gos.d_px[w], gos.d_py[w], gos.d_vx[w], gos.d_vy[w], gos.d_gi[w],
+      gos.d_id[w]);
   CUDA_POST_KERNEL_CHECK();
 }
 
@@ -163,58 +185,39 @@ void gpu_opt_init(const Simulation *s) {
     CUDA_CHECK(cudaMalloc(&gos.d_vx[b], (size_t)N * sizeof(float)));
     CUDA_CHECK(cudaMalloc(&gos.d_vy[b], (size_t)N * sizeof(float)));
     CUDA_CHECK(cudaMalloc(&gos.d_gi[b], (size_t)N * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&gos.d_id[b], (size_t)N * sizeof(int)));
   }
   CUDA_CHECK(cudaMalloc(&gos.d_cell_ids, (size_t)N * sizeof(int)));
   CUDA_CHECK(cudaMalloc(&gos.d_cell_count, GRID_CELLS * sizeof(int)));
   CUDA_CHECK(cudaMalloc(&gos.d_cell_start, GRID_CELLS * sizeof(int)));
   CUDA_CHECK(cudaMalloc(&gos.d_cell_fill, GRID_CELLS * sizeof(int)));
-  CUDA_CHECK(cudaMalloc(&gos.d_sorted_agents, (size_t)N * sizeof(int)));
-  CUDA_CHECK(cudaMalloc(&gos.d_obs_x, (size_t)s->n_obstacles * sizeof(float)));
-  CUDA_CHECK(cudaMalloc(&gos.d_obs_y, (size_t)s->n_obstacles * sizeof(float)));
-  CUDA_CHECK(cudaMalloc(&gos.d_obs_r, (size_t)s->n_obstacles * sizeof(float)));
-  CUDA_CHECK(cudaMalloc(&gos.d_gx, (size_t)s->n_goals * sizeof(float)));
-  CUDA_CHECK(cudaMalloc(&gos.d_gy, (size_t)s->n_goals * sizeof(float)));
+  CUDA_CHECK(
+      cudaMalloc(&gos.d_obs, (size_t)gos.n_obstacles * sizeof(Obstacle)));
+  CUDA_CHECK(cudaMalloc(&gos.d_goals, (size_t)gos.n_goals * sizeof(Goal)));
   CUDA_CHECK(cudaMallocHost(&gos.h_px, (size_t)N * sizeof(float)));
   CUDA_CHECK(cudaMallocHost(&gos.h_py, (size_t)N * sizeof(float)));
   CUDA_CHECK(cudaMallocHost(&gos.h_vx, (size_t)N * sizeof(float)));
   CUDA_CHECK(cudaMallocHost(&gos.h_vy, (size_t)N * sizeof(float)));
   CUDA_CHECK(cudaMallocHost(&gos.h_gi, (size_t)N * sizeof(int)));
+  CUDA_CHECK(cudaMallocHost(&gos.h_id, (size_t)N * sizeof(int)));
 
-  float *ox = (float *)malloc((size_t)s->n_obstacles * sizeof(float));
-  float *oy = (float *)malloc((size_t)s->n_obstacles * sizeof(float));
-  float *or_ = (float *)malloc((size_t)s->n_obstacles * sizeof(float));
-  if (!ox || !oy || !or_)
+  Obstacle *h_obs =
+      (Obstacle *)malloc((size_t)gos.n_obstacles * sizeof(Obstacle));
+  Goal *h_goals = (Goal *)malloc((size_t)gos.n_goals * sizeof(Goal));
+  if (!h_obs || !h_goals)
     cf_die("gpu_opt_init: out of memory");
-  for (int o = 0; o < s->n_obstacles; o++) {
-    ox[o] = s->obstacles[o].x;
-    oy[o] = s->obstacles[o].y;
-    or_[o] = s->obstacles[o].radius;
-  }
-  CUDA_CHECK(cudaMemcpy(gos.d_obs_x, ox, (size_t)s->n_obstacles * sizeof(float),
+  for (int o = 0; o < gos.n_obstacles; o++)
+    h_obs[o] = s->obstacles[o];
+  for (int g = 0; g < gos.n_goals; g++)
+    h_goals[g] = s->goals[g];
+  CUDA_CHECK(cudaMemcpy(gos.d_obs, h_obs,
+                        (size_t)gos.n_obstacles * sizeof(Obstacle),
                         cudaMemcpyHostToDevice));
-  CUDA_CHECK(cudaMemcpy(gos.d_obs_y, oy, (size_t)s->n_obstacles * sizeof(float),
+  CUDA_CHECK(cudaMemcpy(gos.d_goals, h_goals,
+                        (size_t)gos.n_goals * sizeof(Goal),
                         cudaMemcpyHostToDevice));
-  CUDA_CHECK(cudaMemcpy(gos.d_obs_r, or_,
-                        (size_t)s->n_obstacles * sizeof(float),
-                        cudaMemcpyHostToDevice));
-  free(ox);
-  free(oy);
-  free(or_);
-
-  float *hx = (float *)malloc((size_t)s->n_goals * sizeof(float));
-  float *hy = (float *)malloc((size_t)s->n_goals * sizeof(float));
-  if (!hx || !hy)
-    cf_die("gpu_opt_init: out of memory");
-  for (int g = 0; g < s->n_goals; g++) {
-    hx[g] = s->goals[g].x;
-    hy[g] = s->goals[g].y;
-  }
-  CUDA_CHECK(cudaMemcpy(gos.d_gx, hx, (size_t)s->n_goals * sizeof(float),
-                        cudaMemcpyHostToDevice));
-  CUDA_CHECK(cudaMemcpy(gos.d_gy, hy, (size_t)s->n_goals * sizeof(float),
-                        cudaMemcpyHostToDevice));
-  free(hx);
-  free(hy);
+  free(h_obs);
+  free(h_goals);
 
   gpu_opt_upload_from_host(s);
 }
@@ -226,22 +229,20 @@ void gpu_opt_free(void) {
     cudaFree(gos.d_vx[b]);
     cudaFree(gos.d_vy[b]);
     cudaFree(gos.d_gi[b]);
+    cudaFree(gos.d_id[b]);
   }
   cudaFree(gos.d_cell_ids);
   cudaFree(gos.d_cell_count);
   cudaFree(gos.d_cell_start);
   cudaFree(gos.d_cell_fill);
-  cudaFree(gos.d_sorted_agents);
-  cudaFree(gos.d_obs_x);
-  cudaFree(gos.d_obs_y);
-  cudaFree(gos.d_obs_r);
-  cudaFree(gos.d_gx);
-  cudaFree(gos.d_gy);
+  cudaFree(gos.d_obs);
+  cudaFree(gos.d_goals);
   cudaFreeHost(gos.h_px);
   cudaFreeHost(gos.h_py);
   cudaFreeHost(gos.h_vx);
   cudaFreeHost(gos.h_vy);
   cudaFreeHost(gos.h_gi);
+  cudaFreeHost(gos.h_id);
   memset(&gos, 0, sizeof(gos));
 }
 
@@ -257,16 +258,15 @@ void gpu_opt_launch_kernel_only(void) {
   int N = gos.n_agents;
   int r = gos.buf;
   int w = 1 - r;
-  gpu_opt_rebuild_grid(N);
-  int nblocks = (N + BLOCK_SIZE - 1) / BLOCK_SIZE;
-  boids_opt_kernel<<<nblocks, BLOCK_SIZE>>>(
-      gos.d_px[r], gos.d_py[r], gos.d_vx[r], gos.d_vy[r], gos.d_gi[r],
+  gpu_opt_rebuild_grid(N, r, w);
+  int block = cf_cuda_block();
+  int nblocks = (N + block - 1) / block;
+  boids_opt_kernel<<<nblocks, block>>>(
       gos.d_px[w], gos.d_py[w], gos.d_vx[w], gos.d_vy[w], gos.d_gi[w],
-      gos.d_cell_start, gos.d_cell_count, gos.d_sorted_agents, gos.d_obs_x,
-      gos.d_obs_y, gos.d_obs_r, gos.d_gx, gos.d_gy, N, gos.n_obstacles,
-      gos.n_goals);
+      gos.d_id[w], gos.d_px[r], gos.d_py[r], gos.d_vx[r], gos.d_vy[r],
+      gos.d_gi[r], gos.d_id[r], gos.d_cell_start, gos.d_cell_count, gos.d_obs,
+      gos.d_goals, N, gos.n_obstacles, gos.n_goals);
   CUDA_POST_KERNEL_CHECK();
-  gos.buf = w;
 }
 
 static void gpu_opt_copy_to_host(Simulation *s) {
@@ -282,12 +282,15 @@ static void gpu_opt_copy_to_host(Simulation *s) {
                         cudaMemcpyDeviceToHost));
   CUDA_CHECK(cudaMemcpy(gos.h_gi, gos.d_gi[b], (size_t)N * sizeof(int),
                         cudaMemcpyDeviceToHost));
+  CUDA_CHECK(cudaMemcpy(gos.h_id, gos.d_id[b], (size_t)N * sizeof(int),
+                        cudaMemcpyDeviceToHost));
   for (int i = 0; i < N; i++) {
-    s->agents[i].pos.x = gos.h_px[i];
-    s->agents[i].pos.y = gos.h_py[i];
-    s->agents[i].vel.x = gos.h_vx[i];
-    s->agents[i].vel.y = gos.h_vy[i];
-    s->agents[i].goal_idx = gos.h_gi[i];
+    int a = gos.h_id[i];
+    if (a < 0 || a >= N)
+      cf_die("gpu_opt_copy_to_host: id out of range");
+    s->agents[a].pos = (Vec2){gos.h_px[i], gos.h_py[i]};
+    s->agents[a].vel = (Vec2){gos.h_vx[i], gos.h_vy[i]};
+    s->agents[a].goal_idx = gos.h_gi[i];
   }
 }
 
@@ -300,6 +303,7 @@ static void gpu_opt_upload_from_host(const Simulation *s) {
     gos.h_vx[i] = s->agents[i].vel.x;
     gos.h_vy[i] = s->agents[i].vel.y;
     gos.h_gi[i] = s->agents[i].goal_idx;
+    gos.h_id[i] = i;
   }
   CUDA_CHECK(cudaMemcpy(gos.d_px[b], gos.h_px, (size_t)N * sizeof(float),
                         cudaMemcpyHostToDevice));
@@ -310,6 +314,8 @@ static void gpu_opt_upload_from_host(const Simulation *s) {
   CUDA_CHECK(cudaMemcpy(gos.d_vy[b], gos.h_vy, (size_t)N * sizeof(float),
                         cudaMemcpyHostToDevice));
   CUDA_CHECK(cudaMemcpy(gos.d_gi[b], gos.h_gi, (size_t)N * sizeof(int),
+                        cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemcpy(gos.d_id[b], gos.h_id, (size_t)N * sizeof(int),
                         cudaMemcpyHostToDevice));
 }
 
