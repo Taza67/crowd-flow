@@ -160,11 +160,14 @@ make dashboard-cpu
 make dashboard-gpu
 ```
 
-After copying `results/`:
+After copying `results/`, rewrite the HTML from the current template without re-running simulations, then serve:
 
 ```sh
+make dashboard-html
 make dashboard-serve
 ```
+
+`make dashboard-serve` rewrites the HTML from `results/` first.
 
 Time one backend (CSV on stdout). GPU modes emit `KERNEL` then `FRAME`.
 

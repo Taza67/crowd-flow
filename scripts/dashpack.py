@@ -23,7 +23,9 @@ from cfutil import (
 TEMPLATE = Path(__file__).with_name("dashboard.html")
 RESULTS = ROOT / "results"
 OUT = RESULTS / "dashboard.html"
+PACKET = RESULTS / "packet.json"
 CLIP_DIR = RESULTS / "clips"
+_DATA_MARK = "const DATA = "
 
 CLIP_N = SWEEP_N
 CLIP_STEPS = 10000
@@ -32,14 +34,40 @@ CLIP_BLOCK_N = 2000
 CPU_WORKERS = 4
 
 
-def write_dashboard(packet: dict) -> Path:
+def load_packet() -> dict:
+    if PACKET.is_file():
+        return json.loads(PACKET.read_text(encoding="utf-8"))
+    if not OUT.is_file():
+        die("dashboard", f"missing {OUT}  run make dashboard first")
+    html = OUT.read_text(encoding="utf-8")
+    i = html.find(_DATA_MARK)
+    if i < 0:
+        die("dashboard", f"no DATA in {OUT}")
+    i += len(_DATA_MARK)
+    j = html.find(";\n", i)
+    if j < 0:
+        j = html.find(";", i)
+    if j < 0:
+        die("dashboard", f"truncated DATA in {OUT}")
+    return json.loads(html[i:j])
+
+
+def write_dashboard(data: dict) -> Path:
     if not TEMPLATE.is_file():
         die("dashboard", f"missing {TEMPLATE}")
-    data = json.dumps(packet, separators=(",", ":")).replace("<", "\\u003c")
-    html = TEMPLATE.read_text(encoding="utf-8").replace("__DATA__", data)
+    blob = json.dumps(data, separators=(",", ":")).replace("<", "\\u003c")
+    html = TEMPLATE.read_text(encoding="utf-8").replace("__DATA__", blob)
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(html, encoding="utf-8")
+    PACKET.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
     return OUT
+
+
+def rebuild_html(*, fit: float | None = None) -> Path:
+    data = load_packet()
+    if fit is not None:
+        data["fit"] = fit
+    return write_dashboard(data)
 
 
 def packet(

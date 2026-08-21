@@ -56,8 +56,8 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/).
 | `scripts/test.py` | Repro and similar dump tests |
 | `scripts/bench.py` | Bench sweeps |
 | `scripts/replay.py` | Record or load dumps, write dashboard HTML |
-| `scripts/dashboard.py` | Collect clips + sweeps; `--serve` for a local viewer |
-| `scripts/dashpack.py` | Dashboard packet and HTML template fill |
+| `scripts/dashboard.py` | Collect clips + sweeps; `--html` rewrites the viewer; `--serve` for a local viewer |
+| `scripts/dashpack.py` | Dashboard packet, HTML fill, and `--html` rebuild |
 
 ## Code of conduct
 

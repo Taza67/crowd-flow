@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Collect clips + sweeps to results/. Serve with --serve after copying results/."""
+"""Collect clips + sweeps to results/. Rewrite HTML with --html. Serve with --serve."""
 
 from __future__ import annotations
 
@@ -43,6 +43,7 @@ from dashpack import (
     OUT,
     RESULTS,
     packet,
+    rebuild_html,
     write_dashboard,
 )
 from replay import rec_to_pack
@@ -124,7 +125,8 @@ def _sweep_jobs(
     gpu: list[tuple[str, int, int, int]] = []
     for n in SWEEP_N:
         for mode in modes:
-            for block in BLOCKS:
+            blocks = BLOCKS if mode == "gpu_opt" else (DEFAULT_BLOCK,)
+            for block in blocks:
                 if skip_sweep(n, mode, block):
                     continue
                 job = (mode, n, SWEEP_STEPS, block)
@@ -143,9 +145,11 @@ def _clip_jobs(
         for mode in modes:
             if skip_clip(n, mode):
                 continue
+            if mode.startswith("gpu_") and not have_gpu():
+                continue
             dest = dest_dir / f"{mode}_n{n}_b{DEFAULT_BLOCK}.rec.gz"
             jobs.append((mode, n, CLIP_STEPS, DEFAULT_BLOCK, str(dest)))
-    if "gpu_opt" in modes:
+    if "gpu_opt" in modes and have_gpu():
         have = {(m, nn, b) for m, nn, _s, b, _p in jobs}
         for n in CLIP_BLOCK_NS:
             if skip_clip(n, "gpu_opt"):
@@ -210,13 +214,13 @@ def collect(modes: tuple[str, ...]) -> tuple[list[dict], list[dict]]:
             with lock:
                 rows.extend(part)
                 prog.finish("sweep GPU", i, ns, extra)
-        for i, (mode, n, steps, block, dest) in enumerate(gpu_c, 1):
+        for i, (mode, n, steps, block, path) in enumerate(gpu_c, 1):
             extra = f"{mode}  N={n}  block={block}"
             with lock:
                 prog.start("clip GPU", i, nc, extra)
-            rec = _rec_one(mode, n, steps, block, dest)
+            path = _rec_one(mode, n, steps, block, path)
             with lock:
-                packed.append((mode, n, block, rec))
+                packed.append((mode, n, block, path))
                 prog.finish("clip GPU", i, nc, extra)
 
     if cpu_s or cpu_c:
@@ -278,16 +282,40 @@ def collect(modes: tuple[str, ...]) -> tuple[list[dict], list[dict]]:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("cmd", nargs="?", choices=("cpu", "gpu"))
-    p.add_argument("--fit", type=float, default=8.0)
+    p.add_argument("--fit", type=float, default=None)
+    p.add_argument("--html", action="store_true", help="rewrite HTML from results/ (no sim)")
     p.add_argument("--serve", action="store_true", help="serve results/ (local browser)")
     p.add_argument("--no-open", action="store_true")
     return p.parse_args()
 
 
+class _ClipHandler(SimpleHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    extensions_map = {
+        **SimpleHTTPRequestHandler.extensions_map,
+        ".gz": "application/octet-stream",
+        ".rec": "application/octet-stream",
+    }
+
+    def end_headers(self) -> None:
+        path = self.path.split("?", 1)[0]
+        if path.endswith(".gz") or path.endswith(".rec"):
+            self.send_header("Cache-Control", "public, max-age=86400")
+        super().end_headers()
+
+    def copyfile(self, source, outputfile) -> None:
+        try:
+            shutil.copyfileobj(source, outputfile, length=1024 * 1024)
+        except (BrokenPipeError, ConnectionResetError) as err:
+            log("WARN", "dashboard", type(err).__name__)
+
+    def log_message(self, fmt: str, *args) -> None:
+        log("INFO", "dashboard", fmt % args)
+
+
 def serve(open_browser: bool) -> None:
-    if not OUT.is_file():
-        die("dashboard", f"missing {OUT}  run make dashboard first")
-    handler = partial(SimpleHTTPRequestHandler, directory=str(RESULTS))
+    rebuild_html()
+    handler = partial(_ClipHandler, directory=str(RESULTS))
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     url = f"http://127.0.0.1:{httpd.server_address[1]}/{OUT.name}"
     log("INFO", "dashboard", url)
@@ -302,6 +330,10 @@ def serve(open_browser: bool) -> None:
 
 def main() -> None:
     args = parse_args()
+    if args.html:
+        out = rebuild_html(fit=args.fit)
+        log("OK", "dashboard", str(out.relative_to(ROOT)))
+        return
     if args.serve:
         serve(not args.no_open)
         return
@@ -309,7 +341,8 @@ def main() -> None:
     sweeps, clips = collect(modes)
     if not clips and not sweeps:
         die("dashboard", "no clips or sweeps")
-    out = write_dashboard(packet(clips, sweeps, fit=args.fit))
+    fit = 8.0 if args.fit is None else args.fit
+    out = write_dashboard(packet(clips, sweeps, fit=fit))
     log("OK", "dashboard", str(out.relative_to(ROOT)))
 
 

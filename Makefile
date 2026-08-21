@@ -36,7 +36,7 @@ GPU_DEPS := $(if $(HAS_NVCC),$(GPU_BIN),skip-gpu)
 
 .PHONY: all help clean cpu gpu bench bench-cpu bench-gpu run-bench \
         run-bench-cpu run-bench-gpu dump replay replay-cpu replay-gpu \
-        dashboard dashboard-cpu dashboard-gpu dashboard-serve test test-cpu test-gpu \
+        dashboard dashboard-cpu dashboard-gpu dashboard-html dashboard-serve test test-cpu test-gpu \
         skip-gpu gpu-launch-warn
 
 all: cpu gpu
@@ -59,6 +59,7 @@ help:
 	printf '  %-16s  %s\n' dashboard 'CPU then GPU'
 	printf '  %-16s  %s\n' dashboard-cpu 'CPU'
 	printf '  %-16s  %s\n' dashboard-gpu 'GPU'
+	printf '  %-16s  %s\n' dashboard-html 'rewrite HTML'
 	printf '  %-16s  %s\n' dashboard-serve 'serve'
 	printf '  %-16s  %s\n' test 'CPU then GPU'
 	printf '  %-16s  %s\n' test-cpu 'CPU'
@@ -146,6 +147,10 @@ dashboard-gpu: gpu-launch-warn
 dashboard: $(CPU_BIN) gpu-launch-warn
 	printf '%-4s  %-12s  %s\n' INFO dashboard 'CPU then GPU'
 	$(GPU_LAUNCH) python3 scripts/dashboard.py
+
+dashboard-html:
+	printf '%-4s  %-12s  %s\n' INFO dashboard 'rewrite HTML'
+	python3 scripts/dashboard.py --html
 
 dashboard-serve:
 	printf '%-4s  %-12s  %s\n' INFO dashboard 'serve'
