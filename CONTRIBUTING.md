@@ -55,7 +55,7 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/).
 | `inc/steering.h` | Flock, goal, obstacles, Euler |
 | `scripts/test.py` | Repro and similar dump tests |
 | `scripts/bench.py` | Bench sweeps |
-| `scripts/replay.py` | Browser replay |
+| `scripts/replay.py` | Browser replay of all four modes |
 
 ## Code of conduct
 

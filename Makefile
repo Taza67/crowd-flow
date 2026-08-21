@@ -34,25 +34,30 @@ CPU_BIN := $(BUILD)/crowd-sim-cpu
 GPU_BIN := $(BUILD)/crowd-sim-gpu
 GPU_DEPS := $(if $(HAS_NVCC),$(GPU_BIN),skip-gpu)
 
-.PHONY: all help clean cpu gpu bench bench-gpu run-bench run-bench-gpu dump \
-        replay test test-cpu test-gpu skip-gpu
+.PHONY: all help clean cpu gpu bench bench-cpu bench-gpu run-bench \
+        run-bench-cpu run-bench-gpu dump replay replay-cpu replay-gpu \
+        test test-cpu test-gpu skip-gpu gpu-launch-warn
 
 all: cpu gpu
 
 help:
 	$(BLANK)
-	printf '  %-16s  %s\n' make 'CPU + GPU (skip GPU if no nvcc)'
+	printf '  %-16s  %s\n' make 'CPU + GPU (WARN if no nvcc)'
 	printf '  %-16s  %s\n' cpu 'CPU binary'
 	printf '  %-16s  %s\n' gpu 'GPU binary'
-	printf '  %-16s  %s\n' bench 'quick CPU   N=100  steps=100'
-	printf '  %-16s  %s\n' bench-gpu 'quick GPU   N=100  steps=100'
-	printf '  %-16s  %s\n' run-bench 'full CPU sweep'
-	printf '  %-16s  %s\n' run-bench-gpu 'full GPU sweep'
+	printf '  %-16s  %s\n' bench 'CPU then GPU  N=100  steps=100'
+	printf '  %-16s  %s\n' bench-cpu 'CPU  N=100  steps=100'
+	printf '  %-16s  %s\n' bench-gpu 'GPU  N=100  steps=100'
+	printf '  %-16s  %s\n' run-bench 'CPU then GPU sweep'
+	printf '  %-16s  %s\n' run-bench-cpu 'CPU sweep'
+	printf '  %-16s  %s\n' run-bench-gpu 'GPU sweep'
 	printf '  %-16s  %s\n' dump 'CSV stdout  N=50  steps=5  cpu_opt'
-	printf '  %-16s  %s\n' replay 'browser replay  cpu_naive vs cpu_opt'
+	printf '  %-16s  %s\n' replay 'CPU then GPU'
+	printf '  %-16s  %s\n' replay-cpu 'CPU'
+	printf '  %-16s  %s\n' replay-gpu 'GPU'
 	printf '  %-16s  %s\n' test 'CPU then GPU'
-	printf '  %-16s  %s\n' test-cpu 'CPU repro + similar'
-	printf '  %-16s  %s\n' test-gpu 'GPU repro + similar'
+	printf '  %-16s  %s\n' test-cpu 'CPU'
+	printf '  %-16s  %s\n' test-gpu 'GPU'
 	printf '  %-16s  %s\n' clean 'remove build/'
 	$(BLANK)
 
@@ -82,31 +87,30 @@ skip-gpu:
 
 gpu: $(GPU_DEPS)
 
-bench: $(CPU_BIN)
-	printf '%-4s  %-12s  %s\n' INFO bench 'CPU quick  N=100  steps=100'
-	python3 scripts/bench.py cpu -n 100 -s 100
-
-bench-gpu: $(GPU_DEPS)
-ifeq ($(HAS_NVCC),1)
-	printf '%-4s  %-12s  %s\n' INFO bench 'GPU quick  N=100  steps=100'
+gpu-launch-warn:
 ifeq ($(WARN_SRUN),1)
 	printf '%-4s  %-12s  %s\n' WARN gpu 'srun unavailable  running locally'
 endif
-	$(GPU_LAUNCH) python3 scripts/bench.py gpu -n 100 -s 100
-endif
 
-run-bench: $(CPU_BIN)
+bench-cpu: $(CPU_BIN)
+	printf '%-4s  %-12s  %s\n' INFO bench 'CPU  N=100  steps=100'
+	python3 scripts/bench.py cpu -n 100 -s 100
+
+bench-gpu: gpu-launch-warn
+	printf '%-4s  %-12s  %s\n' INFO bench 'GPU  N=100  steps=100'
+	$(GPU_LAUNCH) python3 scripts/bench.py gpu -n 100 -s 100
+
+bench: bench-cpu bench-gpu
+
+run-bench-cpu: $(CPU_BIN)
 	printf '%-4s  %-12s  %s\n' INFO bench 'CPU sweep'
 	python3 scripts/bench.py cpu
 
-run-bench-gpu: $(GPU_DEPS)
-ifeq ($(HAS_NVCC),1)
+run-bench-gpu: gpu-launch-warn
 	printf '%-4s  %-12s  %s\n' INFO bench 'GPU sweep'
-ifeq ($(WARN_SRUN),1)
-	printf '%-4s  %-12s  %s\n' WARN gpu 'srun unavailable  running locally'
-endif
 	$(GPU_LAUNCH) python3 scripts/bench.py gpu
-endif
+
+run-bench: run-bench-cpu run-bench-gpu
 
 dump: $(CPU_BIN)
 	printf '%-4s  %-12s  %s\n' INFO dump 'N=50  steps=5  mode=cpu_opt'
@@ -114,22 +118,25 @@ dump: $(CPU_BIN)
 	./$(CPU_BIN) dump 50 5 cpu_opt
 	$(BLANK)
 
-replay: $(CPU_BIN)
-	printf '%-4s  %-12s  %s\n' INFO replay 'cpu_naive vs cpu_opt'
-	python3 scripts/replay.py --run cpu_naive cpu_opt
+replay-cpu: $(CPU_BIN)
+	printf '%-4s  %-12s  %s\n' INFO replay 'CPU'
+	python3 scripts/replay.py cpu
+
+replay-gpu: gpu-launch-warn
+	printf '%-4s  %-12s  %s\n' INFO replay 'GPU'
+	$(GPU_LAUNCH) python3 scripts/replay.py gpu
+
+replay: $(CPU_BIN) gpu-launch-warn
+	printf '%-4s  %-12s  %s\n' INFO replay 'CPU then GPU'
+	$(GPU_LAUNCH) python3 scripts/replay.py
 
 test-cpu: $(CPU_BIN)
-	printf '%-4s  %-12s  %s\n' INFO test 'CPU repro + similar'
+	printf '%-4s  %-12s  %s\n' INFO test 'CPU'
 	python3 scripts/test.py cpu
 
-test-gpu: $(GPU_DEPS)
-ifeq ($(HAS_NVCC),1)
-	printf '%-4s  %-12s  %s\n' INFO test 'GPU repro + similar'
-ifeq ($(WARN_SRUN),1)
-	printf '%-4s  %-12s  %s\n' WARN gpu 'srun unavailable  running locally'
-endif
+test-gpu: gpu-launch-warn
+	printf '%-4s  %-12s  %s\n' INFO test 'GPU'
 	$(GPU_LAUNCH) python3 scripts/test.py gpu
-endif
 
 test: test-cpu test-gpu
 

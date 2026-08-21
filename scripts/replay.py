@@ -26,7 +26,9 @@ from cfutil import (
     check_proc,
     die,
     dump_data_text,
+    have_gpu,
     log,
+    modes_for,
     parse_obstacles,
     run_crowd,
 )
@@ -208,11 +210,16 @@ def write_html(
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("dumps", nargs="*", type=Path, help="dump CSV or rec files")
+    p.add_argument(
+        "tokens",
+        nargs="*",
+        help="cpu | gpu | dump CSV/rec files",
+    )
     p.add_argument(
         "--run",
-        nargs="+",
+        nargs="*",
         metavar="MODE",
+        default=None,
         help="record these modes then replay",
     )
     p.add_argument("-n", type=int, default=500)
@@ -227,26 +234,38 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
+def split_cmd(tokens: list[str]) -> tuple[str | None, list[Path]]:
+    if tokens and tokens[0] in ("cpu", "gpu"):
+        return tokens[0], [Path(t) for t in tokens[1:]]
+    return None, [Path(t) for t in tokens]
+
+
 def main() -> None:
     args = parse_args()
     paths: list[Path] = []
     tmpdir = None
     try:
-        if args.run:
+        cmd, dumps = split_cmd(args.tokens)
+        run = args.run
+        if run is None and not dumps:
+            run = list(modes_for(cmd))
+        if run:
             tmpdir = tempfile.TemporaryDirectory(prefix="crowd-flow-replay-")
             root = Path(tmpdir.name)
-            for mode in args.run:
+            for mode in run:
+                if mode.startswith("gpu_") and not have_gpu():
+                    continue
                 path = root / f"{mode}.rec"
                 log("INFO", "replay", f"rec {mode}  N={args.n}  steps={args.steps}")
                 rec_to(path, args.n, args.steps, mode)
                 paths.append(path)
-        for p in args.dumps:
+        for p in dumps:
             q = p if p.is_file() else ROOT / p
             if not q.is_file():
                 die("replay", f"missing {p}")
             paths.append(q)
         if not paths:
-            die("replay", "give CSV/rec paths or --run MODE...")
+            die("replay", "give CSV/rec paths or cpu | gpu | --run MODE...")
         tracks = []
         obstacles: list[dict[str, float]] = []
         for p in paths:

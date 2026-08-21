@@ -8,14 +8,15 @@ import csv
 import math
 
 from cfutil import (
-    GPU_BIN,
+    CPU_MODES,
+    GPU_MODES,
     PHYS_COLS,
     STATE_COLS,
     WORLD_HALF,
     check_proc,
     die,
     dump_data_text,
-    ensure_bin,
+    have_gpu,
     log,
     run_crowd,
 )
@@ -92,28 +93,27 @@ def parse_args() -> argparse.Namespace:
 
 
 def suite_cpu(n: int, steps: int, eps: float, world_half: float) -> None:
-    repro("cpu_naive", n, steps)
-    repro("cpu_opt", n, steps)
-    similar("cpu_naive", "cpu_opt", n, steps, eps, world_half)
+    for mode in CPU_MODES:
+        repro(mode, n, steps)
+    similar(CPU_MODES[0], CPU_MODES[1], n, steps, eps, world_half)
 
 
 def suite_gpu(n: int, steps: int, eps: float, world_half: float) -> None:
-    if not ensure_bin(GPU_BIN):
-        log("WARN", "gpu", "nvcc not found  skip", err=True)
+    if not have_gpu():
         return
-    repro("gpu_naive", n, steps)
-    repro("gpu_opt", n, steps)
-    similar("gpu_naive", "gpu_opt", n, steps, eps, world_half)
+    for mode in GPU_MODES:
+        repro(mode, n, steps)
+    similar(GPU_MODES[0], GPU_MODES[1], n, steps, eps, world_half)
 
 
 def main() -> None:
     args = parse_args()
     if args.cmd == "repro":
-        mode = args.modes[0] if args.modes else "cpu_opt"
+        mode = args.modes[0] if args.modes else CPU_MODES[1]
         repro(mode, args.n, args.steps)
     elif args.cmd == "similar":
-        a = args.modes[0] if args.modes else "cpu_naive"
-        b = args.modes[1] if len(args.modes) > 1 else "cpu_opt"
+        a = args.modes[0] if args.modes else CPU_MODES[0]
+        b = args.modes[1] if len(args.modes) > 1 else CPU_MODES[1]
         similar(a, b, args.n, args.steps, args.eps, args.world_half)
     elif args.cmd == "cpu":
         suite_cpu(args.n, args.steps, args.eps, args.world_half)

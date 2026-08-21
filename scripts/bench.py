@@ -7,7 +7,7 @@ import argparse
 import csv
 import io
 
-from cfutil import GPU_BIN, ROOT, check_proc, ensure_bin, log, run_crowd
+from cfutil import CPU_MODES, GPU_MODES, ROOT, check_proc, have_gpu, run_crowd
 
 RESULTS = ROOT / "results" / "bench_results.csv"
 SWEEP = (100, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000)
@@ -60,11 +60,17 @@ def append_csv(rows: list[dict[str, str]]) -> None:
         w.writerows(rows)
 
 
-def suite(kind: str, ns: tuple[int, ...], steps: int) -> None:
-    if kind == "gpu" and not ensure_bin(GPU_BIN):
-        log("WARN", "gpu", "nvcc not found  skip", err=True)
+def suite_cpu(ns: tuple[int, ...], steps: int) -> None:
+    _suite(CPU_MODES, ns, steps)
+
+
+def suite_gpu(ns: tuple[int, ...], steps: int) -> None:
+    if not have_gpu():
         return
-    modes = ("cpu_naive", "cpu_opt") if kind == "cpu" else ("gpu_naive", "gpu_opt")
+    _suite(GPU_MODES, ns, steps)
+
+
+def _suite(modes: tuple[str, ...], ns: tuple[int, ...], steps: int) -> None:
     print(flush=True)
     print(ROW % ("version", "N", "steps", "total_ms", "avg_step_ms", "min_step_ms",
                  "max_step_ms", "fps"), flush=True)
@@ -97,12 +103,12 @@ def main() -> None:
     args = parse_args()
     ns = SWEEP if args.n <= 0 else (args.n,)
     if args.cmd == "cpu":
-        suite("cpu", ns, args.steps)
+        suite_cpu(ns, args.steps)
     elif args.cmd == "gpu":
-        suite("gpu", ns, args.steps)
+        suite_gpu(ns, args.steps)
     else:
-        suite("cpu", ns, args.steps)
-        suite("gpu", ns, args.steps)
+        suite_cpu(ns, args.steps)
+        suite_gpu(ns, args.steps)
 
 
 if __name__ == "__main__":

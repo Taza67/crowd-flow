@@ -10,6 +10,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CPU_BIN = ROOT / "build" / "crowd-sim-cpu"
 GPU_BIN = ROOT / "build" / "crowd-sim-gpu"
+CPU_MODES = ("cpu_naive", "cpu_opt")
+GPU_MODES = ("gpu_naive", "gpu_opt")
+MODES = CPU_MODES + GPU_MODES
+_gpu_ok: bool | None = None
 
 DUMP_COLS = ("t", "id", "x", "y", "vx", "vy", "goal", "step_ms")
 PHYS_COLS = ("t", "id", "x", "y", "vx", "vy", "goal")
@@ -39,6 +43,23 @@ def log(status: str, topic: str, extra: str = "", *, err: bool = False) -> None:
     if extra:
         line += f"  {extra}"
     print(line, file=sys.stderr if err else sys.stdout)
+
+
+def have_gpu() -> bool:
+    global _gpu_ok
+    if _gpu_ok is None:
+        _gpu_ok = ensure_bin(GPU_BIN)
+        if not _gpu_ok:
+            log("WARN", "gpu", "nvcc not found  skip", err=True)
+    return _gpu_ok
+
+
+def modes_for(cmd: str | None) -> tuple[str, ...]:
+    if cmd == "cpu":
+        return CPU_MODES
+    if cmd == "gpu":
+        return GPU_MODES
+    return MODES
 
 
 def die(topic: str, extra: str = "") -> None:
