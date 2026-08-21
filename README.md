@@ -45,7 +45,9 @@
 
 ## About The Project
 
-[![Dashboard Scene panel][product-screenshot]](https://github.com/Taza67/crowd-flow)
+<a href="https://github.com/Taza67/crowd-flow">
+  <img src="images/dashboard-scene.webp" alt="Dashboard Scene panel" width="100%">
+</a>
 
 `crowd-flow` is a crowd simulator based on Reynolds' boids, written in C and CUDA. It runs neighbourhood steering, goal following and contact resolution on the GPU. A CPU build of the same model is available for comparison.
 
@@ -237,4 +239,3 @@ Project link : [https://github.com/Taza67/crowd-flow](https://github.com/Taza67/
 [c-url]: https://fr.wikipedia.org/wiki/C_(langage)
 [cuda-shield]: https://img.shields.io/badge/CUDA-76B900.svg?logo=nvidia&logoColor=white
 [cuda-url]: https://developer.nvidia.com/cuda-toolkit
-[product-screenshot]: images/dashboard-scene.webp
